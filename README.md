@@ -6,7 +6,7 @@ The old Windows desktop mover is now legacy-only. It still exists for reference 
 
 ## Target Workflow
 
-1. Connect to Immich with an API key.
+1. Connect to Immich with either one shared API key or separate RAW and final-account API keys.
 2. Read RAW-account assets from Immich.
 3. Read edited-image-account assets from Immich.
 4. Match edited images to RAW originals using filenames, capture time, metadata, and local visual hashes.
@@ -27,6 +27,7 @@ Ready now:
 - Review UI for accepting or rejecting proposed matches.
 - CSV dry-run manifest with proposed tags for both Immich accounts.
 - Immich API client using `x-api-key`.
+- Optional separate `RAW_IMMICH_API_KEY` and `FINAL_IMMICH_API_KEY` values for user-scoped Immich libraries.
 - Immich image asset discovery by RAW owner ID and edited-image owner ID.
 - Match/tag plans that preserve Immich asset IDs.
 - Immich tag lookup/creation and tag application for `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used`.
@@ -93,6 +94,17 @@ gradle packageDesktopZip
 ```
 
 The legacy desktop zip is written to `build/distributions/photo-culling-assistant-desktop.zip`.
+
+## Immich API Keys
+
+Use `IMMICH_API_KEY` when one Immich API key can see both the RAW user's assets and the final-image user's assets, and can create/apply tags for both sides.
+
+If Immich asset search is scoped to the key owner's library, set side-specific keys instead:
+
+- `RAW_IMMICH_API_KEY`: used to scan RAW assets for `RAW_USER_ID` and apply RAW-side `Keeper` / `not used` tags.
+- `FINAL_IMMICH_API_KEY`: used to scan final assets for `FINAL_USER_ID` and apply final-side `RAW Found` / `No RAW` / `duplicate` tags.
+
+Both side-specific keys are optional. When either is blank, the app falls back to `IMMICH_API_KEY` for that side. `/api/status` reports whether each side has an effective key and which variable supplies it, but never returns the key values.
 
 ## Unraid Readiness
 

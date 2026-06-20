@@ -326,6 +326,11 @@ public final class PhotoCullServer {
         values.put("configured", immichConfig.isConfigured());
         values.put("missing", immichConfig.missingFields());
         values.put("url", immichConfig.url());
+        values.put("sharedApiKeyConfigured", immichConfig.sharedApiKeyConfigured());
+        values.put("rawApiKeyConfigured", immichConfig.rawApiKeyConfigured());
+        values.put("finalApiKeyConfigured", immichConfig.finalApiKeyConfigured());
+        values.put("rawApiKeySource", immichConfig.rawApiKeySource());
+        values.put("finalApiKeySource", immichConfig.finalApiKeySource());
         values.put("rawUserId", immichConfig.rawUserId());
         values.put("finalUserId", immichConfig.finalUserId());
         values.put("keeperTag", immichConfig.keeperTag());

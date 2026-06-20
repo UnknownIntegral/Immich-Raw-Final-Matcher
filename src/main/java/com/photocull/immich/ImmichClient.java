@@ -16,12 +16,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
-public final class ImmichClient {
+public final class ImmichClient implements ImmichApi {
     private final ImmichConfig config;
     private final HttpClient http;
+    private final String apiKey;
 
     public ImmichClient(ImmichConfig config) {
+        this(config, config.userLookupApiKey());
+    }
+
+    public ImmichClient(ImmichConfig config, String apiKey) {
         this.config = config;
+        this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
@@ -124,7 +130,7 @@ public final class ImmichClient {
     }
 
     private String send(String method, String path, String body) throws IOException, InterruptedException {
-        config.requireApiConfigured();
+        requireApiConfigured();
         String target = config.normalizedUrl() + path;
         URI uri;
         try {
@@ -136,7 +142,7 @@ public final class ImmichClient {
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .version(HttpClient.Version.HTTP_1_1)
                 .header("Accept", "application/json")
-                .header("x-api-key", config.apiKey());
+                .header("x-api-key", apiKey);
 
         if (body == null) {
             request.method(method, HttpRequest.BodyPublishers.noBody());
@@ -169,6 +175,19 @@ public final class ImmichClient {
         }
         return new IOException("Immich API " + method + " " + path + " (" + target
                 + ") failed before receiving a response: " + ex.getClass().getName() + ": " + message, ex);
+    }
+
+    private void requireApiConfigured() {
+        List<String> missing = new ArrayList<>();
+        if (config.normalizedUrl().isBlank()) {
+            missing.add("IMMICH_URL");
+        }
+        if (apiKey.isBlank()) {
+            missing.add("Immich API key");
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("Immich API is not configured. Missing: " + String.join(", ", missing));
+        }
     }
 
     private String segment(String value) {
