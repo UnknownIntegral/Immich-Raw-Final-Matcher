@@ -6,6 +6,8 @@ import java.util.List;
 public record ImmichConfig(
         String url,
         String apiKey,
+        String rawApiKey,
+        String finalApiKey,
         String rawUserId,
         String finalUserId,
         String keeperTag,
@@ -20,6 +22,8 @@ public record ImmichConfig(
         return new ImmichConfig(
                 env("IMMICH_URL"),
                 env("IMMICH_API_KEY"),
+                env("RAW_IMMICH_API_KEY"),
+                env("FINAL_IMMICH_API_KEY"),
                 env("RAW_USER_ID"),
                 env("FINAL_USER_ID"),
                 firstNonBlank(env("PCA_KEEPER_TAG"), "Keeper"),
@@ -41,8 +45,11 @@ public record ImmichConfig(
         if (isBlank(url)) {
             missing.add("IMMICH_URL");
         }
-        if (isBlank(apiKey)) {
-            missing.add("IMMICH_API_KEY");
+        if (isBlank(effectiveRawApiKey())) {
+            missing.add("RAW_IMMICH_API_KEY or IMMICH_API_KEY");
+        }
+        if (isBlank(effectiveFinalApiKey())) {
+            missing.add("FINAL_IMMICH_API_KEY or IMMICH_API_KEY");
         }
         if (isBlank(rawUserId)) {
             missing.add("RAW_USER_ID");
@@ -65,12 +72,44 @@ public record ImmichConfig(
         if (isBlank(url)) {
             missing.add("IMMICH_URL");
         }
-        if (isBlank(apiKey)) {
-            missing.add("IMMICH_API_KEY");
+        if (isBlank(userLookupApiKey())) {
+            missing.add("IMMICH_API_KEY, RAW_IMMICH_API_KEY, or FINAL_IMMICH_API_KEY");
         }
         if (!missing.isEmpty()) {
             throw new IllegalStateException("Immich API is not configured. Missing: " + String.join(", ", missing));
         }
+    }
+
+    public String effectiveRawApiKey() {
+        return firstNonBlank(rawApiKey, apiKey);
+    }
+
+    public String effectiveFinalApiKey() {
+        return firstNonBlank(finalApiKey, apiKey);
+    }
+
+    public String userLookupApiKey() {
+        return firstNonBlank(apiKey, firstNonBlank(rawApiKey, finalApiKey));
+    }
+
+    public boolean sharedApiKeyConfigured() {
+        return !isBlank(apiKey);
+    }
+
+    public boolean rawApiKeyConfigured() {
+        return !isBlank(effectiveRawApiKey());
+    }
+
+    public boolean finalApiKeyConfigured() {
+        return !isBlank(effectiveFinalApiKey());
+    }
+
+    public String rawApiKeySource() {
+        return keySource(rawApiKey, "RAW_IMMICH_API_KEY");
+    }
+
+    public String finalApiKeySource() {
+        return keySource(finalApiKey, "FINAL_IMMICH_API_KEY");
     }
 
     public String normalizedUrl() {
@@ -100,6 +139,16 @@ public record ImmichConfig(
 
     private static String firstNonBlank(String first, String fallback) {
         return isBlank(first) ? fallback : first.trim();
+    }
+
+    private String keySource(String sideKey, String sideName) {
+        if (!isBlank(sideKey)) {
+            return sideName;
+        }
+        if (!isBlank(apiKey)) {
+            return "IMMICH_API_KEY";
+        }
+        return "missing";
     }
 
     private static boolean isBlank(String value) {

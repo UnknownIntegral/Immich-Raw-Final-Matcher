@@ -88,7 +88,9 @@ Example starter template:
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/photo-culling-assistant" Mode="rw" Description="App config, cache, manifests, and dry-run reports." Type="Path" Display="always" Required="true" Mask="false"/>
   <Config Name="Immich Media" Target="/immich-media" Default="/mnt/user/immich" Mode="ro" Description="Read-only mount of Immich media files for local preview/hash reads." Type="Path" Display="always" Required="true" Mask="false"/>
   <Config Name="Immich URL" Target="IMMICH_URL" Default="http://immich-server:2283" Mode="" Description="Immich server URL reachable from this container." Type="Variable" Display="always" Required="true" Mask="false"/>
-  <Config Name="Immich API Key" Target="IMMICH_API_KEY" Default="" Mode="" Description="Immich API key. Prefer an admin key so both RAW and final users can be discovered." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Immich API Key" Target="IMMICH_API_KEY" Default="" Mode="" Description="Shared Immich API key. Use this if one key can see both RAW and final libraries and apply tags. Separate RAW/Final keys below can override it per side." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="RAW Immich API Key" Target="RAW_IMMICH_API_KEY" Default="" Mode="" Description="Optional RAW account API key. Set this if RAW assets are only visible to the RAW user's own key. Falls back to Immich API Key when blank." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Final Immich API Key" Target="FINAL_IMMICH_API_KEY" Default="" Mode="" Description="Optional final account API key. Set this if final assets are only visible to the final user's own key. Falls back to Immich API Key when blank." Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="RAW User ID" Target="RAW_USER_ID" Default="" Mode="" Description="Immich user ID that owns the RAW assets." Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Final User ID" Target="FINAL_USER_ID" Default="" Mode="" Description="Immich user ID that owns the final JPG/JPEG/PNG assets." Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Keeper Tag" Target="PCA_KEEPER_TAG" Default="Keeper" Mode="" Description="Tag to apply to RAW assets that have accepted final-image matches." Type="Variable" Display="advanced" Required="true" Mask="false"/>
@@ -124,6 +126,8 @@ Fastest first install:
 7. Open `http://tower:8356`.
 8. Run scan in dry-run mode on a small test dataset.
 9. Confirm proposed final-image and RAW tags before applying anything.
+
+For Immich API keys, start with `IMMICH_API_KEY` if one key can see both users' libraries. If `/api/immich/scan` returns zero RAWs or finals because search only sees the key owner's library, set `RAW_IMMICH_API_KEY` to the RAW user's key and `FINAL_IMMICH_API_KEY` to the final user's key. The side-specific keys are optional and fall back to `IMMICH_API_KEY` when blank.
 
 This proves the container works before publishing to Community Applications.
 

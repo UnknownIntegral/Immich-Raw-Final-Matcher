@@ -4,26 +4,43 @@ import com.photocull.matcher.MatchEngine;
 import com.photocull.matcher.MatchResult;
 import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.PhotoFile;
+import com.photocull.immich.ImmichApi;
+import com.photocull.immich.ImmichAsset;
+import com.photocull.immich.ImmichConfig;
+import com.photocull.immich.ImmichTag;
+import com.photocull.immich.ImmichUser;
+import com.photocull.immich.ImmichWorkflow;
 import com.photocull.server.FinalTagPlanItem;
 import com.photocull.server.Json;
+import com.photocull.server.PhotoCullServer;
 import com.photocull.server.ScanSession;
 import com.photocull.server.TagPlanItem;
 
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
 
 public final class Tests {
     private Tests() {
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         parsesJsonObjects();
         buildsImmichPhotoFiles();
         createsAssetIdTagPlans();
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         flagsFinalsWithMultipleStrongRawCandidates();
+        fallsBackToSharedImmichApiKey();
+        scansRawAndFinalAssetsWithSeparateClients();
+        appliesTagsWithSideSpecificClients();
+        omitsApiKeysFromStatusJson();
     }
 
     private static void parsesJsonObjects() {
@@ -240,6 +257,165 @@ public final class Tests {
         assertTrue(result.reason().contains("multiple strong RAW candidates"), "ambiguous raw match reason");
     }
 
+    private static void fallsBackToSharedImmichApiKey() {
+        ImmichConfig shared = config("shared-key", "", "");
+        assertEquals("shared-key", shared.effectiveRawApiKey(), "raw key falls back to shared");
+        assertEquals("shared-key", shared.effectiveFinalApiKey(), "final key falls back to shared");
+        assertEquals(true, shared.rawApiKeyConfigured(), "raw key configured by fallback");
+        assertEquals(true, shared.finalApiKeyConfigured(), "final key configured by fallback");
+
+        ImmichConfig split = config("", "raw-key", "final-key");
+        assertEquals("raw-key", split.effectiveRawApiKey(), "separate raw key");
+        assertEquals("final-key", split.effectiveFinalApiKey(), "separate final key");
+        assertEquals("RAW_IMMICH_API_KEY", split.rawApiKeySource(), "raw key source");
+        assertEquals("FINAL_IMMICH_API_KEY", split.finalApiKeySource(), "final key source");
+
+        ImmichConfig missingRaw = config("", "", "final-key");
+        assertTrue(missingRaw.missingFields().contains("RAW_IMMICH_API_KEY or IMMICH_API_KEY"), "raw key missing");
+        assertTrue(!missingRaw.missingFields().contains("FINAL_IMMICH_API_KEY or IMMICH_API_KEY"), "final key present");
+    }
+
+    private static void scansRawAndFinalAssetsWithSeparateClients() throws IOException, InterruptedException {
+        RecordingImmichApi rawApi = new RecordingImmichApi(List.of(asset("raw-asset", "raw-user", "IMG_0001.CR3")));
+        RecordingImmichApi finalApi = new RecordingImmichApi(List.of(asset("final-asset", "final-user", "IMG_0001.jpg")));
+        ImmichWorkflow workflow = new ImmichWorkflow(config("", "raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
+
+        ScanSession session = workflow.scan(90, ignored -> {
+        });
+
+        assertEquals(List.of("raw-user"), rawApi.searchOwners, "raw search owner");
+        assertEquals(List.of("final-user"), finalApi.searchOwners, "final search owner");
+        assertEquals(1, session.raws().size(), "raw count from raw client");
+        assertEquals(1, session.finals().size(), "final count from final client");
+    }
+
+    private static void appliesTagsWithSideSpecificClients() throws IOException, InterruptedException {
+        RecordingImmichApi rawApi = new RecordingImmichApi();
+        RecordingImmichApi finalApi = new RecordingImmichApi();
+        ImmichWorkflow workflow = new ImmichWorkflow(config("", "raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
+        PhotoFile rawKeeper = photo("raw-keeper", "raw-user", "IMG_0001.CR3");
+        PhotoFile rawUnused = photo("raw-unused", "raw-user", "IMG_0002.CR3");
+        PhotoFile rawDuplicate = photo("raw-duplicate", "raw-user", "DUP_0004.CR3");
+        PhotoFile finalMatched = photo("final-matched", "final-user", "IMG_0001.jpg");
+        PhotoFile finalUnmatched = photo("final-unmatched", "final-user", "IMG_0003.jpg");
+        PhotoFile finalDuplicateLarge = photo("final-large", "final-user", "DUP_0004.jpg", 5000);
+        PhotoFile finalDuplicateSmall = photo("final-small", "final-user", "DUP_0004.jpg", 2500);
+        List<MatchResult> matches = List.of(
+                new MatchResult(finalMatched, rawKeeper, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null),
+                new MatchResult(finalUnmatched, null, 0, "no RAW", MatchStatus.REJECTED, null),
+                new MatchResult(finalDuplicateLarge, rawDuplicate, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null),
+                new MatchResult(finalDuplicateSmall, rawDuplicate, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null)
+        );
+        ScanSession session = new ScanSession(
+                List.of(rawKeeper, rawUnused, rawDuplicate),
+                List.of(finalMatched, finalUnmatched, finalDuplicateLarge, finalDuplicateSmall),
+                matches,
+                90
+        );
+
+        workflow.applyTags(session, Path.of("build", "test-manifests"));
+
+        assertEquals(true, rawApi.ensuredTags.contains("Keeper"), "raw client ensures Keeper");
+        assertEquals(true, rawApi.ensuredTags.contains("not used"), "raw client ensures not used");
+        assertEquals(false, rawApi.ensuredTags.contains("RAW Found"), "raw client does not ensure final tag");
+        assertEquals(true, finalApi.ensuredTags.contains("RAW Found"), "final client ensures RAW Found");
+        assertEquals(true, finalApi.ensuredTags.contains("No RAW"), "final client ensures No RAW");
+        assertEquals(true, finalApi.ensuredTags.contains("duplicate"), "final client ensures duplicate");
+        assertEquals(false, finalApi.ensuredTags.contains("Keeper"), "final client does not ensure raw tag");
+        assertTrue(rawApi.taggedAssetIds.contains("raw-keeper"), "raw client tags keeper asset");
+        assertTrue(rawApi.taggedAssetIds.contains("raw-unused"), "raw client tags unused asset");
+        assertTrue(finalApi.taggedAssetIds.contains("final-matched"), "final client tags matched final");
+        assertTrue(finalApi.taggedAssetIds.contains("final-unmatched"), "final client tags unmatched final");
+        assertTrue(finalApi.taggedAssetIds.contains("final-small"), "final client tags duplicate final");
+    }
+
+    private static void omitsApiKeysFromStatusJson() throws Exception {
+        ImmichConfig config = new ImmichConfig(
+                "http://immich.local/api",
+                "shared-secret",
+                "raw-secret",
+                "final-secret",
+                "raw-user",
+                "final-user",
+                "Keeper",
+                "not used",
+                "RAW Found",
+                "No RAW",
+                "duplicate",
+                1000,
+                10000
+        );
+        PhotoCullServer server = new PhotoCullServer(8356, Path.of("build", "test-config"), config, "app-secret");
+        Method statusJson = PhotoCullServer.class.getDeclaredMethod("statusJson");
+        statusJson.setAccessible(true);
+        String json = (String) statusJson.invoke(server);
+        Map<String, Object> parsed = Json.parseObject(json);
+        Map<?, ?> immich = (Map<?, ?>) parsed.get("immich");
+
+        assertEquals(Boolean.TRUE, immich.get("sharedApiKeyConfigured"), "shared key status");
+        assertEquals(Boolean.TRUE, immich.get("rawApiKeyConfigured"), "raw key status");
+        assertEquals(Boolean.TRUE, immich.get("finalApiKeyConfigured"), "final key status");
+        assertEquals("RAW_IMMICH_API_KEY", immich.get("rawApiKeySource"), "raw status source");
+        assertEquals("FINAL_IMMICH_API_KEY", immich.get("finalApiKeySource"), "final status source");
+        assertTrue(!json.contains("shared-secret"), "shared key hidden");
+        assertTrue(!json.contains("raw-secret"), "raw key hidden");
+        assertTrue(!json.contains("final-secret"), "final key hidden");
+    }
+
+    private static ImmichConfig config(String sharedKey, String rawKey, String finalKey) {
+        return new ImmichConfig(
+                "http://immich.local/api",
+                sharedKey,
+                rawKey,
+                finalKey,
+                "raw-user",
+                "final-user",
+                "Keeper",
+                "not used",
+                "RAW Found",
+                "No RAW",
+                "duplicate",
+                1000,
+                10000
+        );
+    }
+
+    private static ImmichAsset asset(String id, String ownerId, String fileName) {
+        return new ImmichAsset(
+                id,
+                ownerId,
+                fileName,
+                "/upload/" + fileName,
+                "",
+                "IMAGE",
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                false,
+                "",
+                "",
+                1
+        );
+    }
+
+    private static PhotoFile photo(String id, String ownerId, String fileName) {
+        return photo(id, ownerId, fileName, 1);
+    }
+
+    private static PhotoFile photo(String id, String ownerId, String fileName, long sizeBytes) {
+        return PhotoFile.fromImmichAsset(
+                id,
+                ownerId,
+                fileName,
+                "/upload/" + fileName,
+                sizeBytes,
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                "",
+                ""
+        );
+    }
+
     private static void assertEquals(Object expected, Object actual, String label) {
         if (expected == null ? actual != null : !expected.equals(actual)) {
             throw new AssertionError(label + ": expected " + expected + " but got " + actual);
@@ -249,6 +425,47 @@ public final class Tests {
     private static void assertTrue(boolean condition, String label) {
         if (!condition) {
             throw new AssertionError(label + ": expected true");
+        }
+    }
+
+    private static final class RecordingImmichApi implements ImmichApi {
+        private final List<ImmichAsset> assets;
+        private final List<String> searchOwners = new ArrayList<>();
+        private final List<String> ensuredTags = new ArrayList<>();
+        private final List<String> taggedAssetIds = new ArrayList<>();
+
+        private RecordingImmichApi() {
+            this(List.of());
+        }
+
+        private RecordingImmichApi(List<ImmichAsset> assets) {
+            this.assets = assets;
+        }
+
+        @Override
+        public List<ImmichUser> users() {
+            return List.of();
+        }
+
+        @Override
+        public List<ImmichAsset> imageAssetsForOwner(String ownerId, Set<String> extensions, Consumer<String> progress) {
+            searchOwners.add(ownerId);
+            return assets.stream()
+                    .filter(asset -> ownerId.equals(asset.ownerId()))
+                    .filter(asset -> asset.hasExtensionIn(extensions))
+                    .toList();
+        }
+
+        @Override
+        public ImmichTag ensureTag(String name) {
+            ensuredTags.add(name);
+            return new ImmichTag("tag-" + name, name, name);
+        }
+
+        @Override
+        public int tagAssets(String tagId, List<String> assetIds) {
+            taggedAssetIds.addAll(assetIds);
+            return assetIds.size();
         }
     }
 }
