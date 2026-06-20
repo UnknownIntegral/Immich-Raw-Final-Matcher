@@ -4,7 +4,7 @@ This is the practical gap list for using Photo Culling Assistant as an Immich RA
 
 ## Current Reality
 
-The container can run a local web UI, connect to Immich, read image assets, generate an asset-ID-based dry-run tag plan, and apply `RAW Found` / `No RAW` tags to finals plus `Keeper` / `not used` tags to RAWs through the Immich API.
+The container can run a local web UI, connect to Immich, read image assets, generate an asset-ID-based dry-run tag plan, and apply `RAW Found` / `No RAW` / `duplicate` tags to finals plus `Keeper` / `not used` tags to RAWs through the Immich API.
 
 It still needs hardening and a real Immich smoke test before pointing it at the full library.
 
@@ -13,7 +13,7 @@ It still needs hardening and a real Immich smoke test before pointing it at the 
 - Immich API client using `IMMICH_URL` and `IMMICH_API_KEY`.
 - Asset discovery that separates the RAW owner and edited-image owner.
 - Match results and tag plans that include Immich asset IDs.
-- `RAW Found`, `No RAW`, `Keeper`, and `not used` tag lookup/creation through the Immich API.
+- `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used` tag lookup/creation through the Immich API.
 - Tag application through the Immich API.
 - CSV dry-run and tag-apply manifests with asset IDs.
 - Optional shared access token for API actions with `PCA_ACCESS_TOKEN`.

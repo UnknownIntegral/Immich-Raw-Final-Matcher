@@ -2,6 +2,7 @@ package com.photocull;
 
 import com.photocull.matcher.MatchEngine;
 import com.photocull.matcher.MatchResult;
+import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.PhotoFile;
 import com.photocull.server.FinalTagPlanItem;
 import com.photocull.server.Json;
@@ -21,6 +22,8 @@ public final class Tests {
         buildsImmichPhotoFiles();
         createsAssetIdTagPlans();
         createsFinalAccountTagPlans();
+        tagsOnlyLowerFileSizeDuplicateFinals();
+        flagsFinalsWithMultipleStrongRawCandidates();
     }
 
     private static void parsesJsonObjects() {
@@ -148,9 +151,104 @@ public final class Tests {
         assertEquals(null, noRaw.matchedRawAssetId(), "no raw matched asset");
     }
 
+    private static void tagsOnlyLowerFileSizeDuplicateFinals() {
+        PhotoFile raw = PhotoFile.fromImmichAsset(
+                "raw-1",
+                "raw-owner",
+                "IMG_0001.CR3",
+                "/upload/raw/IMG_0001.CR3",
+                100,
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                "",
+                ""
+        );
+        PhotoFile largeFinal = PhotoFile.fromImmichAsset(
+                "final-large",
+                "final-owner",
+                "IMG_0001.jpg",
+                "/upload/final/a/IMG_0001.jpg",
+                5000,
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                "",
+                ""
+        );
+        PhotoFile smallFinal = PhotoFile.fromImmichAsset(
+                "final-small",
+                "final-owner",
+                "IMG_0001.jpg",
+                "/upload/final/b/IMG_0001.jpg",
+                2500,
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                "",
+                ""
+        );
+
+        List<MatchResult> matches = new MatchEngine().match(List.of(raw), List.of(largeFinal, smallFinal), 90, ignored -> {
+        });
+        ScanSession session = new ScanSession(List.of(raw), List.of(largeFinal, smallFinal), matches, 90);
+        List<FinalTagPlanItem> plan = session.finalTagPlan();
+
+        long rawFound = plan.stream().filter(item -> item.tag().equals("RAW Found")).count();
+        FinalTagPlanItem duplicate = plan.stream().filter(item -> item.tag().equals("duplicate")).findFirst().orElseThrow();
+        assertEquals(2L, rawFound, "both duplicate finals can be RAW Found");
+        assertEquals("final-small", duplicate.finalAssetId(), "smaller duplicate final asset");
+        assertEquals(1L, session.duplicateCount(), "duplicate count");
+    }
+
+    private static void flagsFinalsWithMultipleStrongRawCandidates() {
+        PhotoFile firstRaw = PhotoFile.fromImmichAsset(
+                "raw-1",
+                "raw-owner",
+                "IMG_0001.CR3",
+                "/upload/raw/IMG_0001.CR3",
+                1,
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                "",
+                ""
+        );
+        PhotoFile secondRaw = PhotoFile.fromImmichAsset(
+                "raw-2",
+                "raw-owner",
+                "COPY_0001.CR3",
+                "/upload/raw/COPY_0001.CR3",
+                1,
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                "",
+                ""
+        );
+        PhotoFile finished = PhotoFile.fromImmichAsset(
+                "final-1",
+                "final-owner",
+                "IMG_0001.jpg",
+                "/upload/final/IMG_0001.jpg",
+                1,
+                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:00Z"),
+                "",
+                ""
+        );
+
+        List<MatchResult> matches = new MatchEngine().match(List.of(firstRaw, secondRaw), List.of(finished), 90, ignored -> {
+        });
+        MatchResult result = matches.get(0);
+        assertEquals(MatchStatus.NEEDS_REVIEW, result.status(), "ambiguous raw match status");
+        assertTrue(result.reason().contains("multiple strong RAW candidates"), "ambiguous raw match reason");
+    }
+
     private static void assertEquals(Object expected, Object actual, String label) {
         if (expected == null ? actual != null : !expected.equals(actual)) {
             throw new AssertionError(label + ": expected " + expected + " but got " + actual);
+        }
+    }
+
+    private static void assertTrue(boolean condition, String label) {
+        if (!condition) {
+            throw new AssertionError(label + ": expected true");
         }
     }
 }

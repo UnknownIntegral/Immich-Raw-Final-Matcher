@@ -15,6 +15,9 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 public final class MatchEngine {
+    private static final int AMBIGUOUS_RAW_MATCH_MARGIN = 8;
+    private static final int AMBIGUOUS_RAW_MATCH_MIN_SCORE = 70;
+
     private final LocalImageMatcher imageMatcher = new LocalImageMatcher();
 
     public List<MatchResult> match(
@@ -40,12 +43,14 @@ public final class MatchEngine {
             }
             addTimeCandidates(candidates, rawsByTime, finished.captureTime(), Duration.ofMinutes(5));
 
-            ScoredMatch best = candidates.stream()
+            List<ScoredMatch> scoredCandidates = candidates.stream()
                     .map(raw -> score(finished, raw))
-                    .max(Comparator.comparingInt(ScoredMatch::score))
-                    .orElse(null);
+                    .filter(match -> match.score() > 0)
+                    .sorted(Comparator.comparingInt(ScoredMatch::score).reversed())
+                    .toList();
+            ScoredMatch best = scoredCandidates.isEmpty() ? null : scoredCandidates.get(0);
 
-            if (best == null || best.score() <= 0) {
+            if (best == null) {
                 results.add(new MatchResult(
                         finished,
                         null,
@@ -55,8 +60,24 @@ public final class MatchEngine {
                         null
                 ));
             } else {
-                MatchStatus status = best.score() >= threshold ? MatchStatus.AUTO_ACCEPTED : MatchStatus.NEEDS_REVIEW;
-                results.add(new MatchResult(finished, best.raw(), best.score(), best.reason(), status, null));
+                ScoredMatch second = scoredCandidates.size() < 2 ? null : scoredCandidates.get(1);
+                boolean ambiguousRawMatch = second != null
+                        && second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, threshold - 10)
+                        && best.score() - second.score() <= AMBIGUOUS_RAW_MATCH_MARGIN;
+                if (ambiguousRawMatch) {
+                    results.add(new MatchResult(
+                            finished,
+                            best.raw(),
+                            best.score(),
+                            best.reason() + "; multiple strong RAW candidates, next best "
+                                    + second.raw().path() + " scored " + second.score(),
+                            MatchStatus.NEEDS_REVIEW,
+                            null
+                    ));
+                } else {
+                    MatchStatus status = best.score() >= threshold ? MatchStatus.AUTO_ACCEPTED : MatchStatus.NEEDS_REVIEW;
+                    results.add(new MatchResult(finished, best.raw(), best.score(), best.reason(), status, null));
+                }
             }
 
             processed++;

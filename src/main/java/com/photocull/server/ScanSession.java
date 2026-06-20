@@ -107,12 +107,19 @@ public final class ScanSession {
     }
 
     public synchronized List<FinalTagPlanItem> finalTagPlan() {
-        return finalTagPlan("RAW Found", "No RAW");
+        return finalTagPlan("RAW Found", "No RAW", "duplicate");
     }
 
     public synchronized List<FinalTagPlanItem> finalTagPlan(String rawFoundTag, String noRawTag) {
+        return finalTagPlan(rawFoundTag, noRawTag, "duplicate");
+    }
+
+    public synchronized List<FinalTagPlanItem> finalTagPlan(String rawFoundTag, String noRawTag, String duplicateTag) {
+        Set<Path> duplicateFinalPaths = duplicateFinalPaths();
+        Map<Path, MatchResult> resultByFinalPath = new HashMap<>();
         List<FinalTagPlanItem> plan = new ArrayList<>();
         for (MatchResult result : results) {
+            resultByFinalPath.put(result.finished().path(), result);
             if (result.raw() != null
                     && (result.status() == MatchStatus.AUTO_ACCEPTED || result.status() == MatchStatus.ACCEPTED)) {
                 plan.add(new FinalTagPlanItem(
@@ -133,6 +140,21 @@ public final class ScanSession {
                         result.finished().immichAssetId(),
                         result.raw() == null ? null : result.raw().immichAssetId(),
                         result.score()
+                ));
+            }
+        }
+        for (PhotoFile duplicate : finals) {
+            if (duplicateFinalPaths.contains(duplicate.path())) {
+                MatchResult result = resultByFinalPath.get(duplicate.path());
+                PhotoFile raw = result == null ? null : result.raw();
+                plan.add(new FinalTagPlanItem(
+                        duplicate,
+                        duplicateTag,
+                        "lower file size duplicate with same final-image filename stem",
+                        raw == null ? null : raw.path(),
+                        duplicate.immichAssetId(),
+                        raw == null ? null : raw.immichAssetId(),
+                        result == null ? 0 : result.score()
                 ));
             }
         }
@@ -172,5 +194,37 @@ public final class ScanSession {
 
     public long noRawCount() {
         return finalTagPlan().stream().filter(item -> item.tag().equals("No RAW")).count();
+    }
+
+    public long duplicateCount() {
+        return duplicateFinalPaths().size();
+    }
+
+    private Set<Path> duplicateFinalPaths() {
+        Map<String, List<PhotoFile>> grouped = new HashMap<>();
+        for (PhotoFile finished : finals) {
+            String key = duplicateKey(finished);
+            if (!key.isBlank()) {
+                grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(finished);
+            }
+        }
+
+        Set<Path> duplicates = new HashSet<>();
+        for (List<PhotoFile> group : grouped.values()) {
+            if (group.size() < 2) {
+                continue;
+            }
+            long largestSize = group.stream().mapToLong(PhotoFile::sizeBytes).max().orElse(0);
+            for (PhotoFile finished : group) {
+                if (finished.sizeBytes() < largestSize) {
+                    duplicates.add(finished.path());
+                }
+            }
+        }
+        return duplicates;
+    }
+
+    private String duplicateKey(PhotoFile file) {
+        return file.normalizedStem();
     }
 }

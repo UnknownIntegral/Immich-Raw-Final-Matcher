@@ -101,7 +101,7 @@ public final class WebUi {
                     }
                     .summary {
                       display: grid;
-                      grid-template-columns: repeat(8, minmax(100px, 1fr));
+                      grid-template-columns: repeat(9, minmax(96px, 1fr));
                       gap: 8px;
                     }
                     .metric {
@@ -216,6 +216,7 @@ public final class WebUi {
                         <div class="metric"><div>not used RAWs</div><div id="unusedCount">0</div></div>
                         <div class="metric"><div>RAW Found finals</div><div id="rawFoundCount">0</div></div>
                         <div class="metric"><div>No RAW finals</div><div id="noRawCount">0</div></div>
+                        <div class="metric"><div>duplicate finals</div><div id="duplicateCount">0</div></div>
                       </div>
                     </section>
                     <section>
@@ -311,14 +312,14 @@ public final class WebUi {
                       }
                     });
                     $('applyTagsButton').addEventListener('click', async () => {
-                      if (!confirm('Apply RAW Found / No RAW tags to final images and Keeper / not used tags to RAW assets in Immich?')) return;
+                      if (!confirm('Apply RAW Found / No RAW / duplicate tags to final images and Keeper / not used tags to RAW assets in Immich?')) return;
                       setBusy(true);
                       message('Applying Immich tags...');
                       try {
                         const response = await apiFetch('/api/immich/apply-tags', { method: 'POST' });
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.error || 'Apply tags failed');
-                        message(`Tagged finals: ${data.rawFoundTagged}/${data.rawFoundAssets} RAW Found, ${data.noRawTagged}/${data.noRawAssets} No RAW. RAWs: ${data.keeperTagged}/${data.keeperAssets} Keeper, ${data.unusedTagged}/${data.unusedAssets} not used. Manifest: ${data.manifest}`);
+                        message(`Tagged finals: ${data.rawFoundTagged}/${data.rawFoundAssets} RAW Found, ${data.noRawTagged}/${data.noRawAssets} No RAW, ${data.duplicateTagged}/${data.duplicateAssets} duplicate. RAWs: ${data.keeperTagged}/${data.keeperAssets} Keeper, ${data.unusedTagged}/${data.unusedAssets} not used. Manifest: ${data.manifest}`);
                       } catch (error) {
                         message(error.message);
                       } finally {
@@ -359,6 +360,7 @@ public final class WebUi {
                       $('unusedCount').textContent = s.unusedCount || 0;
                       $('rawFoundCount').textContent = s.rawFoundCount || 0;
                       $('noRawCount').textContent = s.noRawCount || 0;
+                      $('duplicateCount').textContent = s.duplicateCount || 0;
                       $('dryRunButton').disabled = !state.session;
                       $('applyTagsButton').disabled = !state.session || (!(state.tagPlan || []).length && !(state.finalTagPlan || []).length);
                       renderMatches();

@@ -12,6 +12,7 @@ public record ImmichConfig(
         String unusedTag,
         String rawFoundTag,
         String noRawTag,
+        String duplicateTag,
         int pageSize,
         int maxPages
 ) {
@@ -25,6 +26,7 @@ public record ImmichConfig(
                 firstNonBlank(env("PCA_UNUSED_TAG"), "not used"),
                 firstNonBlank(env("PCA_RAW_FOUND_TAG"), "RAW Found"),
                 firstNonBlank(env("PCA_NO_RAW_TAG"), "No RAW"),
+                firstNonBlank(env("PCA_DUPLICATE_TAG"), "duplicate"),
                 intEnv("PCA_IMMICH_PAGE_SIZE", 1000, 1, 1000),
                 intEnv("PCA_IMMICH_MAX_PAGES", 10000, 1, 1_000_000)
         );

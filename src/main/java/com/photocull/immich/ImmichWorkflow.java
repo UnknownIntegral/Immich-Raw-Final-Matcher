@@ -57,7 +57,7 @@ public final class ImmichWorkflow {
         }
 
         List<TagPlanItem> rawPlan = session.tagPlan(config.keeperTag(), config.unusedTag());
-        List<FinalTagPlanItem> finalPlan = session.finalTagPlan(config.rawFoundTag(), config.noRawTag());
+        List<FinalTagPlanItem> finalPlan = session.finalTagPlan(config.rawFoundTag(), config.noRawTag(), config.duplicateTag());
         List<String> keeperIds = new ArrayList<>();
         List<String> unusedIds = new ArrayList<>();
         for (TagPlanItem item : rawPlan) {
@@ -73,6 +73,7 @@ public final class ImmichWorkflow {
 
         List<String> rawFoundIds = new ArrayList<>();
         List<String> noRawIds = new ArrayList<>();
+        List<String> duplicateIds = new ArrayList<>();
         for (FinalTagPlanItem item : finalPlan) {
             if (item.finalAssetId() == null || item.finalAssetId().isBlank()) {
                 throw new IllegalStateException("Tag plan contains final-image rows without Immich asset IDs.");
@@ -81,6 +82,8 @@ public final class ImmichWorkflow {
                 rawFoundIds.add(item.finalAssetId());
             } else if (item.tag().equals(config.noRawTag())) {
                 noRawIds.add(item.finalAssetId());
+            } else if (item.tag().equals(config.duplicateTag())) {
+                duplicateIds.add(item.finalAssetId());
             }
         }
 
@@ -88,20 +91,24 @@ public final class ImmichWorkflow {
         ImmichTag unused = client.ensureTag(config.unusedTag());
         ImmichTag rawFound = client.ensureTag(config.rawFoundTag());
         ImmichTag noRaw = client.ensureTag(config.noRawTag());
+        ImmichTag duplicate = client.ensureTag(config.duplicateTag());
         int keeperTagged = tagInBatches(keeper.id(), keeperIds);
         int unusedTagged = tagInBatches(unused.id(), unusedIds);
         int rawFoundTagged = tagInBatches(rawFound.id(), rawFoundIds);
         int noRawTagged = tagInBatches(noRaw.id(), noRawIds);
+        int duplicateTagged = tagInBatches(duplicate.id(), duplicateIds);
         Path manifest = new ImmichTagManifestWriter().writeCsv(rawPlan, finalPlan, configDir);
         return new ImmichTagApplyResult(
                 keeperIds.size(),
                 unusedIds.size(),
                 rawFoundIds.size(),
                 noRawIds.size(),
+                duplicateIds.size(),
                 keeperTagged,
                 unusedTagged,
                 rawFoundTagged,
                 noRawTagged,
+                duplicateTagged,
                 manifest
         );
     }

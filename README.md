@@ -1,6 +1,6 @@
 # Photo Culling Assistant
 
-Photo Culling Assistant is being focused on one target: an Unraid-hosted Immich helper that matches RAW assets from one Immich account to final images from another Immich account. It tags final-image assets as `RAW Found` or `No RAW`, and RAW assets as `Keeper` or `not used`, so cleanup happens inside Immich.
+Photo Culling Assistant is being focused on one target: an Unraid-hosted Immich helper that matches RAW assets from one Immich account to final images from another Immich account. It tags final-image assets as `RAW Found`, `No RAW`, or `duplicate`, and RAW assets as `Keeper` or `not used`, so cleanup happens inside Immich.
 
 The old Windows desktop mover is now legacy-only. It still exists for reference and local experiments, but the supported direction is the Unraid web server and Immich tagging workflow.
 
@@ -12,7 +12,7 @@ The old Windows desktop mover is now legacy-only. It still exists for reference 
 4. Match edited images to RAW originals using filenames, capture time, metadata, and local visual hashes.
 5. Review uncertain matches in the web UI.
 6. Dry-run the tag plan.
-7. Apply `RAW Found` / `No RAW` to final images and `Keeper` / `not used` to RAWs through the Immich API.
+7. Apply `RAW Found` / `No RAW` / `duplicate` to final images and `Keeper` / `not used` to RAWs through the Immich API.
 8. Delete or archive `not used` RAWs from Immich after reviewing the tag in Immich.
 
 The app must not move, rename, or delete files inside Immich-managed folders directly.
@@ -29,7 +29,7 @@ Ready now:
 - Immich API client using `x-api-key`.
 - Immich image asset discovery by RAW owner ID and edited-image owner ID.
 - Match/tag plans that preserve Immich asset IDs.
-- Immich tag lookup/creation and tag application for `RAW Found`, `No RAW`, `Keeper`, and `not used`.
+- Immich tag lookup/creation and tag application for `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used`.
 - Optional shared access token for API actions with `PCA_ACCESS_TOKEN`.
 - Dockerfile and starter Unraid template.
 - Lightweight automated tests for JSON parsing, Immich asset mapping, and asset-ID tag plans.
@@ -50,6 +50,8 @@ Not ready yet for the final Immich workflow:
 - Camera make/model when available.
 - Local-only visual similarity using perceptual hashes from finished images and best-effort embedded RAW JPEG previews.
 - Weak filename similarity for renamed exports.
+- Duplicate finals with the same filename stem; only lower-file-size copies receive the `duplicate` tag.
+- Ambiguous final images with multiple strong RAW candidates are forced into review.
 
 All matching and image recognition runs locally. The app should not upload images, hashes, or metadata to external services.
 

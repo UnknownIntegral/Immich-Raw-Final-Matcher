@@ -234,10 +234,12 @@ public final class PhotoCullServer {
             values.put("unusedAssets", result.unusedAssets());
             values.put("rawFoundAssets", result.rawFoundAssets());
             values.put("noRawAssets", result.noRawAssets());
+            values.put("duplicateAssets", result.duplicateAssets());
             values.put("keeperTagged", result.keeperTagged());
             values.put("unusedTagged", result.unusedTagged());
             values.put("rawFoundTagged", result.rawFoundTagged());
             values.put("noRawTagged", result.noRawTagged());
+            values.put("duplicateTagged", result.duplicateTagged());
             values.put("manifest", result.manifest());
             sendJson(exchange, Json.object(values));
         } catch (Exception ex) {
@@ -263,7 +265,11 @@ public final class PhotoCullServer {
         values.put("session", sessionSummary(scanSession));
         values.put("matches", matchRows(scanSession.results()));
         values.put("tagPlan", tagPlanRows(scanSession.tagPlan(immichConfig.keeperTag(), immichConfig.unusedTag())));
-        values.put("finalTagPlan", finalTagPlanRows(scanSession.finalTagPlan(immichConfig.rawFoundTag(), immichConfig.noRawTag())));
+        values.put("finalTagPlan", finalTagPlanRows(scanSession.finalTagPlan(
+                immichConfig.rawFoundTag(),
+                immichConfig.noRawTag(),
+                immichConfig.duplicateTag()
+        )));
         return Json.object(values);
     }
 
@@ -279,6 +285,7 @@ public final class PhotoCullServer {
         values.put("unusedCount", scanSession.unusedCount());
         values.put("rawFoundCount", scanSession.rawFoundCount());
         values.put("noRawCount", scanSession.noRawCount());
+        values.put("duplicateCount", scanSession.duplicateCount());
         values.put("threshold", scanSession.threshold());
         return values;
     }
@@ -325,6 +332,7 @@ public final class PhotoCullServer {
         values.put("unusedTag", immichConfig.unusedTag());
         values.put("rawFoundTag", immichConfig.rawFoundTag());
         values.put("noRawTag", immichConfig.noRawTag());
+        values.put("duplicateTag", immichConfig.duplicateTag());
         return values;
     }
 
@@ -341,7 +349,7 @@ public final class PhotoCullServer {
     }
 
     private List<FinalTagPlanItem> finalTagPlan() {
-        return session.finalTagPlan(immichConfig.rawFoundTag(), immichConfig.noRawTag());
+        return session.finalTagPlan(immichConfig.rawFoundTag(), immichConfig.noRawTag(), immichConfig.duplicateTag());
     }
 
     private List<Map<String, Object>> tagPlanRows(List<TagPlanItem> plan) {

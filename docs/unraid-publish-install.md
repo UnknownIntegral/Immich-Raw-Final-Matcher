@@ -16,7 +16,7 @@ For Unraid, the server app should:
 - Run a Web UI on a configurable port, default `8356`.
 - Store config, cache, dry-run reports, and manifests in `/config`.
 - Read Immich media through a read-only mount.
-- Apply `RAW Found`, `No RAW`, `Keeper`, and `not used` tags through the Immich API.
+- Apply `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used` tags through the Immich API.
 - Use read-only Postgres only as an optional performance accelerator.
 - Never write to Immich Postgres.
 - Never directly move/delete files inside Immich-managed folders.
@@ -79,7 +79,7 @@ Example starter template:
   <Privileged>false</Privileged>
   <Support>https://github.com/YOUR_GITHUB_USER/photo-culling-assistant/issues</Support>
   <Project>https://github.com/YOUR_GITHUB_USER/photo-culling-assistant</Project>
-  <Overview>Match RAW assets from one Immich user to final images from another Immich user, then tag finals as RAW Found/No RAW and RAWs as Keeper/not used for review inside Immich.</Overview>
+  <Overview>Match RAW assets from one Immich user to final images from another Immich user, then tag finals as RAW Found/No RAW/duplicate and RAWs as Keeper/not used for review inside Immich.</Overview>
   <Category>MediaApp:Photos Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:8356]</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/YOUR_GITHUB_USER/unraid-templates/main/photo-culling-assistant.xml</TemplateURL>
@@ -91,6 +91,11 @@ Example starter template:
   <Config Name="Immich API Key" Target="IMMICH_API_KEY" Default="" Mode="" Description="Immich API key. Prefer an admin key so both RAW and final users can be discovered." Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="RAW User ID" Target="RAW_USER_ID" Default="" Mode="" Description="Immich user ID that owns the RAW assets." Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Final User ID" Target="FINAL_USER_ID" Default="" Mode="" Description="Immich user ID that owns the final JPG/JPEG/PNG assets." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Keeper Tag" Target="PCA_KEEPER_TAG" Default="Keeper" Mode="" Description="Tag to apply to RAW assets that have accepted final-image matches." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Unused RAW Tag" Target="PCA_UNUSED_TAG" Default="not used" Mode="" Description="Tag to apply to RAW assets without accepted final-image matches." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="RAW Found Final Tag" Target="PCA_RAW_FOUND_TAG" Default="RAW Found" Mode="" Description="Tag to apply to final images with accepted RAW matches." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="No RAW Final Tag" Target="PCA_NO_RAW_TAG" Default="No RAW" Mode="" Description="Tag to apply to final images where no RAW match can be found." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Duplicate Final Tag" Target="PCA_DUPLICATE_TAG" Default="duplicate" Mode="" Description="Tag to apply only to the lower-file-size final image when duplicate final filenames are found." Type="Variable" Display="advanced" Required="true" Mask="false"/>
   <Config Name="Dry Run Default" Target="DRY_RUN_DEFAULT" Default="true" Mode="" Description="Start in dry-run mode. Recommended." Type="Variable" Display="advanced" Required="true" Mask="false">true</Config>
 </Container>
 ```
@@ -172,6 +177,6 @@ The first useful Unraid version should do only this:
 - Match and score assets.
 - Show review UI.
 - Generate dry-run manifest.
-- Apply `RAW Found`, `No RAW`, `Keeper`, and `not used` tags through Immich API.
+- Apply `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used` tags through Immich API.
 
 No file moves. No direct database writes. No direct deletes.

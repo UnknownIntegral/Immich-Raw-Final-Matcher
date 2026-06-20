@@ -71,7 +71,7 @@ The matching model should keep Immich asset IDs alongside filesystem paths so re
 6. Save dry-run manifest.
 7. Review low-confidence matches.
 8. Re-run dry-run report.
-9. Apply `RAW Found` / `No RAW` tags to final-account assets and `Keeper` / `not used` tags to RAW-account assets through the Immich API.
+9. Apply `RAW Found` / `No RAW` / `duplicate` tags to final-account assets and `Keeper` / `not used` tags to RAW-account assets through the Immich API.
 10. Delete or archive `not used` RAWs in Immich after review.
 
 ## Preferred Immich Culling Workflow
@@ -82,6 +82,7 @@ Tags to apply to final-account assets:
 
 - `RAW Found`: final image has a matched RAW.
 - `No RAW`: final image does not have a matched RAW.
+- `duplicate`: final image is the lower-file-size duplicate of another final image with the same filename stem.
 
 Tags to apply to RAW-account assets:
 
@@ -97,7 +98,7 @@ Deletion should happen in Immich after review:
 1. Run match.
 2. Apply dry-run tags only.
 3. Review low-confidence matches in this app.
-4. Apply `RAW Found` / `No RAW` to finals and `Keeper` / `not used` to RAWs.
+4. Apply `RAW Found` / `No RAW` / `duplicate` to finals and `Keeper` / `not used` to RAWs.
 5. In Immich, filter/tag-view `not used` assets and delete from the RAW account.
 
 ## Unraid Community App Shape

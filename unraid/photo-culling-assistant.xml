@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/YOUR_GITHUB_USER/photo-culling-assistant/issues</Support>
   <Project>https://github.com/YOUR_GITHUB_USER/photo-culling-assistant</Project>
-  <Overview>Match RAW assets from one Immich account to final images from another Immich account, review uncertain matches, and apply RAW Found/No RAW tags to finals plus Keeper/not used tags to RAWs through the Immich API. Matching runs locally.</Overview>
+  <Overview>Match RAW assets from one Immich account to final images from another Immich account, review uncertain matches, and apply RAW Found/No RAW/duplicate tags to finals plus Keeper/not used tags to RAWs through the Immich API. Matching runs locally.</Overview>
   <Category>MediaApp:Photos Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:8356]</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/YOUR_GITHUB_USER/unraid-templates/main/photo-culling-assistant.xml</TemplateURL>
@@ -22,6 +22,7 @@
   <Config Name="Unused RAW Tag" Target="PCA_UNUSED_TAG" Default="not used" Mode="" Description="Tag to apply to RAW assets without accepted final-image matches." Type="Variable" Display="advanced" Required="true" Mask="false"/>
   <Config Name="RAW Found Final Tag" Target="PCA_RAW_FOUND_TAG" Default="RAW Found" Mode="" Description="Tag to apply to final images with accepted RAW matches." Type="Variable" Display="advanced" Required="true" Mask="false"/>
   <Config Name="No RAW Final Tag" Target="PCA_NO_RAW_TAG" Default="No RAW" Mode="" Description="Tag to apply to final images where no RAW match can be found." Type="Variable" Display="advanced" Required="true" Mask="false"/>
+  <Config Name="Duplicate Final Tag" Target="PCA_DUPLICATE_TAG" Default="duplicate" Mode="" Description="Tag to apply only to the lower-file-size final image when duplicate final filenames are found." Type="Variable" Display="advanced" Required="true" Mask="false"/>
   <Config Name="RAW Root" Target="/raws" Default="/mnt/user/photos/raws" Mode="ro" Description="Optional legacy read-only RAW folder for filesystem dry-run scans." Type="Path" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Final Images Root" Target="/finals" Default="/mnt/user/photos/finals" Mode="ro" Description="Optional legacy read-only final-image folder for filesystem dry-run scans." Type="Path" Display="advanced" Required="false" Mask="false"/>
 </Container>
