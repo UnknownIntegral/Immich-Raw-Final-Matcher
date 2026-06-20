@@ -22,7 +22,9 @@ public final class ImmichClient {
 
     public ImmichClient(ImmichConfig config) {
         this.config = config;
-        this.http = HttpClient.newHttpClient();
+        this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .build();
     }
 
     public List<ImmichUser> users() throws IOException, InterruptedException {
@@ -123,7 +125,16 @@ public final class ImmichClient {
 
     private String send(String method, String path, String body) throws IOException, InterruptedException {
         config.requireApiConfigured();
-        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(config.normalizedUrl() + path))
+        String target = config.normalizedUrl() + path;
+        URI uri;
+        try {
+            uri = URI.create(target);
+        } catch (IllegalArgumentException ex) {
+            throw requestFailure(method, path, target, ex);
+        }
+
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri)
+                .version(HttpClient.Version.HTTP_1_1)
                 .header("Accept", "application/json")
                 .header("x-api-key", config.apiKey());
 
@@ -134,13 +145,30 @@ public final class ImmichClient {
             request.method(method, HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         }
 
-        HttpResponse<String> response = http.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response;
+        try {
+            response = http.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (IOException ex) {
+            throw requestFailure(method, path, target, ex);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw requestFailure(method, path, target, ex);
+        }
         int status = response.statusCode();
         if (status < 200 || status >= 300) {
-            throw new IOException("Immich API " + method + " " + path + " failed with HTTP "
+            throw new IOException("Immich API " + method + " " + path + " (" + target + ") failed with HTTP "
                     + status + ": " + response.body());
         }
         return response.body();
+    }
+
+    private IOException requestFailure(String method, String path, String target, Exception ex) {
+        String message = ex.getMessage();
+        if (message == null || message.isBlank()) {
+            message = "(no message)";
+        }
+        return new IOException("Immich API " + method + " " + path + " (" + target
+                + ") failed before receiving a response: " + ex.getClass().getName() + ": " + message, ex);
     }
 
     private String segment(String value) {
