@@ -1,0 +1,119 @@
+plugins {
+    id 'application'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    failOnNoDiscoveredTests = false
+}
+
+application {
+    applicationName = 'photo-culling-assistant-server'
+    mainClass = 'com.photocull.server.ServerApp'
+}
+
+tasks.register('runServer', JavaExec) {
+    group = 'application'
+    description = 'Runs the Unraid/web UI server on port 8356 by default.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.photocull.server.ServerApp'
+}
+
+tasks.register('runDesktop', JavaExec) {
+    group = 'application'
+    description = 'Runs the legacy Windows desktop app.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.photocull.app.App'
+}
+
+tasks.register('serverStartScripts', CreateStartScripts) {
+    group = 'distribution'
+    description = 'Creates launcher scripts for the web UI server.'
+    mainClass = 'com.photocull.server.ServerApp'
+    applicationName = 'photo-culling-assistant-server'
+    outputDir = layout.buildDirectory.dir('serverScripts').get().asFile
+    classpath = tasks.named('jar').map { it.outputs.files }.get() + sourceSets.main.runtimeClasspath
+}
+
+tasks.register('installServerDist', Copy) {
+    group = 'distribution'
+    description = 'Installs a runnable web UI server distribution.'
+    dependsOn tasks.named('jar'), tasks.named('serverStartScripts')
+    into layout.buildDirectory.dir('install/photo-culling-assistant-server')
+    from(tasks.named('serverStartScripts')) {
+        into 'bin'
+        filePermissions {
+            unix('rwxr-xr-x')
+        }
+    }
+    from(tasks.named('jar')) {
+        into 'lib'
+    }
+}
+
+tasks.register('packageServerZip', Zip) {
+    group = 'distribution'
+    description = 'Builds a runnable zip distribution for the web UI server.'
+    dependsOn tasks.named('installServerDist')
+    from layout.buildDirectory.dir('install/photo-culling-assistant-server')
+    archiveFileName = 'photo-culling-assistant-server.zip'
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+}
+
+tasks.register('desktopStartScripts', CreateStartScripts) {
+    group = 'distribution'
+    description = 'Creates launcher scripts for the legacy Windows desktop app.'
+    mainClass = 'com.photocull.app.App'
+    applicationName = 'photo-culling-assistant-desktop'
+    outputDir = layout.buildDirectory.dir('desktopScripts').get().asFile
+    classpath = tasks.named('jar').map { it.outputs.files }.get() + sourceSets.main.runtimeClasspath
+}
+
+tasks.register('installDesktopDist', Copy) {
+    group = 'distribution'
+    description = 'Installs a runnable legacy Windows desktop distribution.'
+    dependsOn tasks.named('jar'), tasks.named('desktopStartScripts')
+    into layout.buildDirectory.dir('install/photo-culling-assistant-desktop')
+    from(tasks.named('desktopStartScripts')) {
+        into 'bin'
+    }
+    from(tasks.named('jar')) {
+        into 'lib'
+    }
+}
+
+tasks.register('packageDesktopZip', Zip) {
+    group = 'distribution'
+    description = 'Builds a runnable zip distribution for the legacy Windows desktop app.'
+    dependsOn tasks.named('installDesktopDist')
+    from layout.buildDirectory.dir('install/photo-culling-assistant-desktop')
+    archiveFileName = 'photo-culling-assistant-desktop.zip'
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+}
+
+tasks.register('packageZip') {
+    group = 'distribution'
+    description = 'Compatibility alias for the Unraid/web UI server zip.'
+    dependsOn tasks.named('packageServerZip')
+}
+
+tasks.register('runUnitTests', JavaExec) {
+    group = 'verification'
+    description = 'Runs lightweight no-dependency unit tests.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.photocull.Tests'
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('runUnitTests')
+}
