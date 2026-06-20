@@ -1,7 +1,5 @@
 package com.photocull.matcher;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Locale;
@@ -14,6 +12,7 @@ public record PhotoFile(
         Path root,
         String immichAssetId,
         String immichOwnerId,
+        String contentHash,
         String extension,
         String stem,
         String normalizedStem,
@@ -27,29 +26,6 @@ public record PhotoFile(
 ) {
     private static final Pattern TRAILING_NUMBER = Pattern.compile("(\\d{3,})$");
 
-    public static PhotoFile from(Path path, Path root) throws IOException {
-        String fileName = path.getFileName().toString();
-        String extension = extension(fileName);
-        String stem = stem(fileName);
-        PhotoMetadata metadata = ExifReader.read(path, extension);
-        return new PhotoFile(
-                path,
-                root,
-                null,
-                null,
-                extension,
-                stem,
-                normalize(stem),
-                trailingNumber(stem).orElse(""),
-                Files.size(path),
-                Files.getLastModifiedTime(path).toInstant(),
-                metadata.captureTime(),
-                metadata.captureTimeFromMetadata(),
-                metadata.make(),
-                metadata.model()
-        );
-    }
-
     public static PhotoFile fromImmichAsset(
             String assetId,
             String ownerId,
@@ -61,6 +37,22 @@ public record PhotoFile(
             String make,
             String model
     ) {
+        return fromImmichAsset(assetId, ownerId, originalFileName, originalPath, sizeBytes, fileModifiedAt,
+                captureTime, make, model, null);
+    }
+
+    public static PhotoFile fromImmichAsset(
+            String assetId,
+            String ownerId,
+            String originalFileName,
+            String originalPath,
+            long sizeBytes,
+            Instant fileModifiedAt,
+            Instant captureTime,
+            String make,
+            String model,
+            String contentHash
+    ) {
         String fileName = firstNonBlank(originalFileName, fileName(originalPath), assetId);
         String extension = extension(fileName);
         String stem = stem(fileName);
@@ -70,6 +62,7 @@ public record PhotoFile(
                 path.getParent() == null ? Path.of("") : path.getParent(),
                 blankToNull(assetId),
                 blankToNull(ownerId),
+                blankToNull(contentHash),
                 extension,
                 stem,
                 normalize(stem),

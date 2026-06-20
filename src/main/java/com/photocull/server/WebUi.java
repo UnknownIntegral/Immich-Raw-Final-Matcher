@@ -13,461 +13,93 @@ public final class WebUi {
                   <meta name="viewport" content="width=device-width, initial-scale=1">
                   <title>Photo Culling Assistant</title>
                   <style>
-                    :root {
-                      color-scheme: light;
-                      --bg: #f7f7f4;
-                      --panel: #ffffff;
-                      --ink: #202124;
-                      --muted: #646a73;
-                      --line: #d8dadd;
-                      --accent: #28635a;
-                      --accent-strong: #194840;
-                      --warn: #936400;
-                      --bad: #9a2f2f;
-                    }
-                    * { box-sizing: border-box; }
-                    body {
-                      margin: 0;
-                      font-family: "Segoe UI", system-ui, sans-serif;
-                      background: var(--bg);
-                      color: var(--ink);
-                    }
-                    header {
-                      padding: 18px 24px 12px;
-                      border-bottom: 1px solid var(--line);
-                      background: #ffffff;
-                    }
-                    h1 {
-                      margin: 0;
-                      font-size: 22px;
-                      font-weight: 650;
-                    }
-                    main {
-                      padding: 18px 24px 28px;
-                      display: grid;
-                      gap: 16px;
-                    }
-                    section {
-                      background: var(--panel);
-                      border: 1px solid var(--line);
-                      border-radius: 6px;
-                      padding: 14px;
-                    }
-                    h2 {
-                      margin: 0 0 12px;
-                      font-size: 15px;
-                    }
-                    .grid {
-                      display: grid;
-                      grid-template-columns: 150px minmax(260px, 1fr) 120px 130px;
-                      gap: 10px;
-                      align-items: center;
-                    }
-                    label {
-                      color: var(--muted);
-                      font-size: 13px;
-                    }
-                    input {
-                      width: 100%;
-                      min-height: 34px;
-                      border: 1px solid var(--line);
-                      border-radius: 4px;
-                      padding: 6px 8px;
-                      font: inherit;
-                    }
-                    button {
-                      min-height: 34px;
-                      border: 1px solid var(--accent);
-                      background: var(--accent);
-                      color: white;
-                      border-radius: 4px;
-                      padding: 6px 12px;
-                      font: inherit;
-                      cursor: pointer;
-                    }
-                    button.secondary {
-                      background: #ffffff;
-                      color: var(--accent-strong);
-                    }
-                    button:disabled {
-                      opacity: 0.55;
-                      cursor: default;
-                    }
-                    .actions {
-                      display: flex;
-                      gap: 8px;
-                      flex-wrap: wrap;
-                      align-items: center;
-                    }
-                    .summary {
-                      display: grid;
-                      grid-template-columns: repeat(9, minmax(96px, 1fr));
-                      gap: 8px;
-                    }
-                    .metric {
-                      border: 1px solid var(--line);
-                      border-radius: 6px;
-                      padding: 10px;
-                      background: #fbfbf9;
-                    }
-                    .metric div:first-child {
-                      color: var(--muted);
-                      font-size: 12px;
-                    }
-                    .metric div:last-child {
-                      font-size: 20px;
-                      font-weight: 650;
-                      margin-top: 3px;
-                    }
-                    .tabs {
-                      display: flex;
-                      gap: 8px;
-                      margin-bottom: 10px;
-                    }
-                    .tabs button {
-                      min-height: 30px;
-                      background: #ffffff;
-                      color: var(--accent-strong);
-                    }
-                    .tabs button.active {
-                      background: var(--accent);
-                      color: white;
-                    }
-                    .table-wrap {
-                      overflow: auto;
-                      border: 1px solid var(--line);
-                      border-radius: 6px;
-                      max-height: 58vh;
-                    }
-                    table {
-                      width: 100%;
-                      border-collapse: collapse;
-                      font-size: 13px;
-                    }
-                    th, td {
-                      padding: 8px;
-                      border-bottom: 1px solid var(--line);
-                      text-align: left;
-                      vertical-align: top;
-                    }
-                    th {
-                      position: sticky;
-                      top: 0;
-                      background: #f0f2ef;
-                      z-index: 1;
-                    }
-                    tr.selected {
-                      background: #e8f1ee;
-                    }
-                    .score-high { color: #17603d; font-weight: 650; }
-                    .score-mid { color: var(--warn); font-weight: 650; }
-                    .score-low { color: var(--bad); font-weight: 650; }
-                    .path {
-                      max-width: 420px;
-                      word-break: break-all;
-                    }
-                    .muted {
-                      color: var(--muted);
-                    }
-                    .status {
-                      min-height: 20px;
-                      color: var(--muted);
-                    }
-                    @media (max-width: 900px) {
-                      .grid, .summary { grid-template-columns: 1fr; }
-                    }
+                    :root { color-scheme: light; --bg:#f6f7f4; --panel:#fff; --ink:#202124; --muted:#646a73; --line:#d8dadd; --accent:#28635a; --accent-strong:#194840; --warn:#936400; --bad:#9a2f2f; }
+                    * { box-sizing:border-box; } body { margin:0; font-family:"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+                    header, main { max-width:1440px; margin:auto; padding:20px; } header { padding-bottom:6px; } h1,h2,h3,p { margin-top:0; } h1 { margin-bottom:4px; }
+                    section { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:18px; margin-bottom:16px; }
+                    .grid { display:grid; grid-template-columns:max-content minmax(100px,1fr) max-content minmax(100px,1fr) max-content; gap:10px; align-items:center; }
+                    input { min-width:0; padding:8px; border:1px solid var(--line); border-radius:5px; } button { padding:8px 12px; border:0; border-radius:5px; background:var(--accent); color:#fff; cursor:pointer; } button.secondary { background:#e8efec; color:var(--accent-strong); } button:disabled { opacity:.55; cursor:default; }
+                    .actions,.tabs { display:flex; gap:8px; flex-wrap:wrap; align-items:center; } .tabs button { background:#fff; color:var(--accent-strong); border:1px solid var(--line); } .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+                    .progress-shell { display:flex; align-items:center; gap:12px; margin-top:14px; } .progress { flex:1; height:11px; border-radius:8px; overflow:hidden; background:#e7e9e7; } .progress > div { height:100%; width:0; background:var(--accent); transition:width .25s; } .progress.indeterminate > div { width:35%; animation:move 1.2s infinite ease-in-out; } @keyframes move { from { transform:translateX(-120%); } to { transform:translateX(320%); } }
+                    .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; } .metric { padding:11px; border:1px solid var(--line); border-radius:6px; background:#fbfcf9; } .metric div:first-child { color:var(--muted); font-size:12px; } .metric div:last-child { font-size:21px; font-weight:650; margin-top:3px; }
+                    .note,.muted { color:var(--muted); } .note { font-size:12px; margin-top:10px; } .status { min-height:20px; color:var(--muted); }
+                    .table-wrap { overflow:auto; max-height:58vh; border:1px solid var(--line); border-radius:6px; } table { width:100%; border-collapse:collapse; font-size:13px; } th,td { padding:8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; } th { position:sticky; top:0; background:#f0f2ef; z-index:1; } .path { max-width:300px; overflow-wrap:anywhere; } .score-high { color:#17603d; font-weight:650; } .score-mid { color:var(--warn); font-weight:650; } .score-low { color:var(--bad); font-weight:650; }
+                    .review-grid { display:grid; grid-template-columns:1fr 1fr auto; gap:14px; padding:14px 0; border-bottom:1px solid var(--line); align-items:start; } .asset { display:grid; grid-template-columns:112px 1fr; gap:10px; min-width:0; } .thumb { width:112px; height:84px; object-fit:cover; border-radius:5px; background:#e7e9e7; } .asset-name { overflow-wrap:anywhere; font-weight:600; } .asset-id { color:var(--muted); font-size:12px; overflow-wrap:anywhere; } .review-actions { display:flex; flex-direction:column; gap:8px; min-width:118px; }
+                    @media (max-width:850px) { .grid { grid-template-columns:1fr; } .review-grid { grid-template-columns:1fr; } .review-actions { flex-direction:row; } }
                   </style>
                 </head>
                 <body>
-                  <header>
-                    <h1>Photo Culling Assistant</h1>
-                    <div class="muted">Local web UI on port 8356. Dry-run first; tag finals and RAWs in Immich.</div>
-                  </header>
+                  <header><h1>Photo Culling Assistant</h1><div class="muted">Immich-only matching, review, and safe tag planning.</div></header>
                   <main>
                     <section>
-                      <h2>Scan</h2>
+                      <h2>Scan Immich</h2>
                       <form id="scanForm" class="grid">
-                        <label for="rawRoot">RAW root</label>
-                        <input id="rawRoot" name="rawRoot" placeholder="/raws or C:\\Photos\\RAW">
-                        <label for="threshold">Auto-accept %</label>
-                        <input id="threshold" name="threshold" type="number" min="0" max="100" value="90">
-                        <label for="finalRoot">Final images</label>
-                        <input id="finalRoot" name="finalRoot" placeholder="/finals or C:\\Photos\\Edited">
-                        <div></div>
-                        <button id="scanButton" type="submit">Scan</button>
+                        <label for="autoAccept">Auto-accept %</label><input id="autoAccept" type="number" min="1" max="100" value="90">
+                        <label for="autoReject">Auto-reject %</label><input id="autoReject" type="number" min="0" max="99" value="50">
+                        <button id="scanButton" type="submit">Scan Immich</button>
                       </form>
-                      <div class="actions" style="margin-top: 12px;">
-                        <button id="acceptButton" class="secondary" disabled>Accept selected</button>
-                        <button id="rejectButton" class="secondary" disabled>Reject selected</button>
-                        <button id="dryRunButton" disabled>Write dry-run manifest</button>
-                        <button id="immichScanButton" class="secondary">Scan Immich</button>
-                        <button id="applyTagsButton" disabled>Apply all Immich tags</button>
-                        <span id="message" class="status"></span>
-                      </div>
+                      <div class="progress-shell" id="progressShell" hidden><div id="progress" class="progress indeterminate"><div></div></div><span id="progressText" class="status">Starting…</span></div>
+                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Write dry-run manifest</button><button id="applyTagsButton" disabled>Apply Immich tags</button><span id="message" class="status"></span></div>
                     </section>
                     <section>
-                      <h2>Summary</h2>
+                      <h2>Scan summary</h2>
                       <div class="summary">
-                        <div class="metric"><div>RAWs</div><div id="rawCount">0</div></div>
-                        <div class="metric"><div>Finals</div><div id="finalCount">0</div></div>
-                        <div class="metric"><div>Matches</div><div id="matchCount">0</div></div>
-                        <div class="metric"><div>Review</div><div id="reviewCount">0</div></div>
-                        <div class="metric"><div>Keeper RAWs</div><div id="keeperCount">0</div></div>
-                        <div class="metric"><div>not used RAWs</div><div id="unusedCount">0</div></div>
-                        <div class="metric"><div>RAW Found finals</div><div id="rawFoundCount">0</div></div>
-                        <div class="metric"><div>No RAW finals</div><div id="noRawCount">0</div></div>
-                        <div class="metric"><div>duplicate finals</div><div id="duplicateCount">0</div></div>
+                        <div class="metric"><div>RAW files detected</div><div id="rawCount">0</div></div>
+                        <div class="metric"><div>Final files detected</div><div id="finalCount">0</div></div>
+                        <div class="metric"><div>Finals with matching RAW</div><div id="rawFoundCount">0</div></div>
+                        <div class="metric"><div>Pairs needing review</div><div id="reviewCount">0</div></div>
+                        <div class="metric"><div>Unused RAWs</div><div id="unusedCount">0</div></div>
+                        <div class="metric"><div>Duplicate final photos</div><div id="duplicateCount">0</div></div>
+                        <div class="metric"><div>Duplicate RAW photos</div><div id="duplicateRawCount">0</div></div>
                       </div>
+                      <div class="note">Duplicate counts use exact Immich checksums. Possible duplicates use matching filenames only: finals <span id="possibleFinalCount">0</span>, RAWs <span id="possibleRawCount">0</span>.</div>
                     </section>
                     <section>
-                      <div class="tabs">
-                        <button id="matchesTab" class="active">Matches</button>
-                        <button id="tagPlanTab">RAW Tags</button>
-                        <button id="finalTagPlanTab">Final Tags</button>
-                      </div>
-                      <div id="matchesView" class="table-wrap">
-                        <table>
-                          <thead><tr><th>Status</th><th>Score</th><th>Final image</th><th>RAW match</th><th>Reason</th></tr></thead>
-                          <tbody id="matchesBody"></tbody>
-                        </table>
-                      </div>
-                      <div id="tagPlanView" class="table-wrap" style="display:none;">
-                        <table>
-                          <thead><tr><th>Tag</th><th>RAW asset</th><th>RAW</th><th>Matched final asset</th><th>Matched final</th><th>Score</th><th>Basis</th></tr></thead>
-                          <tbody id="tagPlanBody"></tbody>
-                        </table>
-                      </div>
-                      <div id="finalTagPlanView" class="table-wrap" style="display:none;">
-                        <table>
-                          <thead><tr><th>Tag</th><th>Final asset</th><th>Final image</th><th>Matched RAW asset</th><th>Matched RAW</th><th>Score</th><th>Basis</th></tr></thead>
-                          <tbody id="finalTagPlanBody"></tbody>
-                        </table>
-                      </div>
+                      <div class="tabs"><button id="reviewTab" class="active">Review queue</button><button id="matchesTab">All results</button><button id="tagPlanTab">RAW tags</button><button id="finalTagPlanTab">Final tags</button></div>
+                      <div id="reviewView"></div>
+                      <div id="matchesView" class="table-wrap" style="display:none"><table><thead><tr><th>Status</th><th>Score</th><th>Final</th><th>RAW</th><th>Reason</th></tr></thead><tbody id="matchesBody"></tbody></table></div>
+                      <div id="tagPlanView" class="table-wrap" style="display:none"><table><thead><tr><th>Tag</th><th>RAW</th><th>Matched final</th><th>Score</th><th>Basis</th></tr></thead><tbody id="tagPlanBody"></tbody></table></div>
+                      <div id="finalTagPlanView" class="table-wrap" style="display:none"><table><thead><tr><th>Tag</th><th>Final</th><th>Matched RAW</th><th>Score</th><th>Basis</th></tr></thead><tbody id="finalTagPlanBody"></tbody></table></div>
                     </section>
                   </main>
                   <script>
-                    let selectedIndex = null;
                     let state = { matches: [], tagPlan: [], finalTagPlan: [], session: null };
+                    let busy = false; const thumbs = new Map(); const $ = id => document.getElementById(id);
+                    const message = text => $('message').textContent = text || '';
+                    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+                    const scoreClass = score => score >= 90 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low';
+                    $('scanForm').addEventListener('submit', startScan);
+                    $('dryRunButton').addEventListener('click', writeDryRun);
+                    $('applyTagsButton').addEventListener('click', applyTags);
+                    ['review','matches','tagPlan','finalTagPlan'].forEach(tab => $(tab + 'Tab').addEventListener('click', () => showTab(tab)));
 
-                    const $ = (id) => document.getElementById(id);
-                    const message = (text) => $('message').textContent = text || '';
-                    const scoreClass = (score) => score >= 90 ? 'score-high' : score >= 70 ? 'score-mid' : 'score-low';
-
-                    $('scanForm').addEventListener('submit', async (event) => {
-                      event.preventDefault();
-                      selectedIndex = null;
-                      setBusy(true);
-                      message('Scanning. Large libraries can take a while...');
-                      try {
-                        const body = new URLSearchParams(new FormData(event.target));
-                        const response = await apiFetch('/api/scan', { method: 'POST', body });
-                        const data = await response.json();
-                        if (!response.ok) throw new Error(data.error || 'Scan failed');
-                        state = data;
-                        render();
-                        message('Scan complete.');
-                      } catch (error) {
-                        message(error.message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    });
-
-                    $('acceptButton').addEventListener('click', () => updateSelected('ACCEPTED'));
-                    $('rejectButton').addEventListener('click', () => updateSelected('REJECTED'));
-                    $('dryRunButton').addEventListener('click', async () => {
-                      setBusy(true);
-                      message('Writing dry-run manifest...');
-                      try {
-                        const response = await apiFetch('/api/dry-run', { method: 'POST' });
-                        const data = await response.json();
-                        if (!response.ok) throw new Error(data.error || 'Dry-run failed');
-                        state.tagPlan = data.tagPlan;
-                        state.finalTagPlan = data.finalTagPlan || [];
-                        renderTagPlan();
-                        renderFinalTagPlan();
-                        message(data.manifest ? `Dry-run manifest: ${data.manifest}` : 'Dry-run manifest written.');
-                      } catch (error) {
-                        message(error.message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    });
-                    $('immichScanButton').addEventListener('click', async () => {
-                      selectedIndex = null;
-                      setBusy(true);
-                      message('Scanning Immich assets. This can take a while...');
-                      try {
-                        const body = new URLSearchParams({ threshold: $('threshold').value || '90' });
-                        const response = await apiFetch('/api/immich/scan', { method: 'POST', body });
-                        const data = await response.json();
-                        if (!response.ok) throw new Error(data.error || 'Immich scan failed');
-                        state = data;
-                        render();
-                        message('Immich scan complete. Review matches before applying tags.');
-                      } catch (error) {
-                        message(error.message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    });
-                    $('applyTagsButton').addEventListener('click', async () => {
-                      if (!confirm('Apply RAW Found / No RAW / duplicate tags to final images and Keeper / not used tags to RAW assets in Immich?')) return;
-                      setBusy(true);
-                      message('Applying Immich tags...');
-                      try {
-                        const response = await apiFetch('/api/immich/apply-tags', { method: 'POST' });
-                        const data = await response.json();
-                        if (!response.ok) throw new Error(data.error || 'Apply tags failed');
-                        message(`Tagged finals: ${data.rawFoundTagged}/${data.rawFoundAssets} RAW Found, ${data.noRawTagged}/${data.noRawAssets} No RAW, ${data.duplicateTagged}/${data.duplicateAssets} duplicate. RAWs: ${data.keeperTagged}/${data.keeperAssets} Keeper, ${data.unusedTagged}/${data.unusedAssets} not used. Manifest: ${data.manifest}`);
-                      } catch (error) {
-                        message(error.message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    });
-
-                    $('matchesTab').addEventListener('click', () => showTab('matches'));
-                    $('tagPlanTab').addEventListener('click', () => showTab('tagPlan'));
-                    $('finalTagPlanTab').addEventListener('click', () => showTab('finalTagPlan'));
-
-                    async function updateSelected(status) {
-                      if (selectedIndex === null) return;
-                      setBusy(true);
-                      try {
-                        const body = new URLSearchParams({ index: selectedIndex, status });
-                        const response = await apiFetch('/api/match/status', { method: 'POST', body });
-                        const data = await response.json();
-                        if (!response.ok) throw new Error(data.error || 'Update failed');
-                        state = data;
-                        selectedIndex = null;
-                        render();
-                        message('Review status updated.');
-                      } catch (error) {
-                        message(error.message);
-                      } finally {
-                        setBusy(false);
-                      }
+                    async function startScan(event) {
+                      event.preventDefault(); const accept = Number($('autoAccept').value); const reject = Number($('autoReject').value);
+                      if (!(reject < accept)) { message('Auto-reject must be lower than auto-accept.'); return; }
+                      setBusy(true); showProgress('Starting Immich scan…', -1); message('');
+                      try { const response = await apiFetch('/api/immich/scan', {method:'POST', body:new URLSearchParams({autoAccept:accept, autoReject:reject})}); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Scan failed'); await pollScan(); }
+                      catch (error) { message(error.message); hideProgress(); setBusy(false); }
                     }
-
-                    function render() {
-                      const s = state.session || {};
-                      $('rawCount').textContent = s.rawCount || 0;
-                      $('finalCount').textContent = s.finalCount || 0;
-                      $('matchCount').textContent = s.matchCount || 0;
-                      $('reviewCount').textContent = s.reviewCount || 0;
-                      $('keeperCount').textContent = s.keeperCount || 0;
-                      $('unusedCount').textContent = s.unusedCount || 0;
-                      $('rawFoundCount').textContent = s.rawFoundCount || 0;
-                      $('noRawCount').textContent = s.noRawCount || 0;
-                      $('duplicateCount').textContent = s.duplicateCount || 0;
-                      $('dryRunButton').disabled = !state.session;
-                      $('applyTagsButton').disabled = !state.session || (!(state.tagPlan || []).length && !(state.finalTagPlan || []).length);
-                      renderMatches();
-                      renderTagPlan();
-                      renderFinalTagPlan();
+                    async function pollScan() {
+                      while (true) { await new Promise(resolve => setTimeout(resolve, 900)); const response = await apiFetch('/api/immich/scan/status'); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Could not read scan status'); const job = data.job; showProgress(job.message, job.percent); if (job.state === 'FAILED') throw new Error(job.error || 'Scan failed'); if (job.state === 'COMPLETE') { const sessionResponse = await apiFetch('/api/session'); state = await sessionResponse.json(); if (!sessionResponse.ok) throw new Error(state.error || 'Could not load scan results'); render(); hideProgress(); setBusy(false); message('Immich scan complete.'); return; } }
                     }
-
-                    function renderMatches() {
-                      const body = $('matchesBody');
-                      body.innerHTML = '';
-                      for (const row of state.matches || []) {
-                        const tr = document.createElement('tr');
-                        tr.dataset.index = row.index;
-                        if (row.index === selectedIndex) tr.classList.add('selected');
-                        tr.innerHTML = `
-                          <td>${escapeHtml(row.statusLabel)}</td>
-                          <td class="${scoreClass(row.score)}">${row.score}</td>
-                          <td class="path">${escapeHtml(row.finishedPath)}</td>
-                          <td class="path">${escapeHtml(row.rawPath || '')}</td>
-                          <td>${escapeHtml(row.reason || '')}</td>
-                        `;
-                        tr.addEventListener('click', () => {
-                          selectedIndex = row.index;
-                          $('acceptButton').disabled = !row.rawPath;
-                          $('rejectButton').disabled = false;
-                          renderMatches();
-                        });
-                        body.appendChild(tr);
-                      }
-                    }
-
-                    function renderTagPlan() {
-                      const body = $('tagPlanBody');
-                      body.innerHTML = '';
-                      for (const row of state.tagPlan || []) {
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = `
-                          <td><strong>${escapeHtml(row.tag)}</strong></td>
-                          <td class="path">${escapeHtml(row.rawAssetId || '')}</td>
-                          <td class="path">${escapeHtml(row.rawPath)}</td>
-                          <td class="path">${escapeHtml(row.matchedFinalAssetId || '')}</td>
-                          <td class="path">${escapeHtml(row.matchedFinalPath || '')}</td>
-                          <td>${row.score || 0}</td>
-                          <td>${escapeHtml(row.basis || '')}</td>
-                        `;
-                        body.appendChild(tr);
-                      }
-                    }
-
-                    function renderFinalTagPlan() {
-                      const body = $('finalTagPlanBody');
-                      body.innerHTML = '';
-                      for (const row of state.finalTagPlan || []) {
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = `
-                          <td><strong>${escapeHtml(row.tag)}</strong></td>
-                          <td class="path">${escapeHtml(row.finalAssetId || '')}</td>
-                          <td class="path">${escapeHtml(row.finalPath)}</td>
-                          <td class="path">${escapeHtml(row.matchedRawAssetId || '')}</td>
-                          <td class="path">${escapeHtml(row.matchedRawPath || '')}</td>
-                          <td>${row.score || 0}</td>
-                          <td>${escapeHtml(row.basis || '')}</td>
-                        `;
-                        body.appendChild(tr);
-                      }
-                    }
-
-                    function showTab(tab) {
-                      $('matchesTab').classList.toggle('active', tab === 'matches');
-                      $('tagPlanTab').classList.toggle('active', tab === 'tagPlan');
-                      $('finalTagPlanTab').classList.toggle('active', tab === 'finalTagPlan');
-                      $('matchesView').style.display = tab === 'matches' ? '' : 'none';
-                      $('tagPlanView').style.display = tab === 'tagPlan' ? '' : 'none';
-                      $('finalTagPlanView').style.display = tab === 'finalTagPlan' ? '' : 'none';
-                    }
-
-                    function setBusy(busy) {
-                      $('scanButton').disabled = busy;
-                      $('immichScanButton').disabled = busy;
-                      $('dryRunButton').disabled = busy || !state.session;
-                      $('applyTagsButton').disabled = busy || !state.session || (!(state.tagPlan || []).length && !(state.finalTagPlan || []).length);
-                      $('acceptButton').disabled = busy || selectedIndex === null;
-                      $('rejectButton').disabled = busy || selectedIndex === null;
-                    }
-
-                    async function apiFetch(url, options = {}, retry = true) {
-                      const headers = new Headers(options.headers || {});
-                      const token = localStorage.getItem('pcaAccessToken');
-                      if (token) headers.set('X-PCA-Token', token);
-                      const response = await fetch(url, { ...options, headers });
-                      if (response.status === 401 && retry) {
-                        const entered = prompt('Access token');
-                        if (entered !== null) {
-                          localStorage.setItem('pcaAccessToken', entered);
-                          return apiFetch(url, options, false);
-                        }
-                      }
-                      return response;
-                    }
-
-                    function escapeHtml(value) {
-                      return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-                        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
-                      }[c]));
-                    }
-
-                    render();
+                    async function writeDryRun() { setBusy(true); message('Writing dry-run manifest…'); try { const response=await apiFetch('/api/dry-run',{method:'POST'}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Dry-run failed'); state.tagPlan=data.tagPlan; state.finalTagPlan=data.finalTagPlan||[]; render(); message(data.manifest ? `Dry-run manifest: ${data.manifest}` : 'Dry-run manifest written.'); } catch(error){message(error.message);} finally{setBusy(false);} }
+                    async function applyTags() { if (!confirm('Apply the reviewed Immich tag plan?')) return; setBusy(true); message('Applying Immich tags…'); try { const response=await apiFetch('/api/immich/apply-tags',{method:'POST'}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Tag application failed'); message(`Tagged ${data.rawFoundTagged}/${data.rawFoundAssets} finals with RAW Found and ${data.keeperTagged}/${data.keeperAssets} RAWs as Keeper.`); } catch(error){message(error.message);} finally{setBusy(false);} }
+                    async function updateStatus(index,status) { setBusy(true); try { const response=await apiFetch('/api/match/status',{method:'POST',body:new URLSearchParams({index,status})}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Review update failed'); state=data; render(); message('Review status updated.'); } catch(error){message(error.message);} finally{setBusy(false);} }
+                    function render() { const s=state.session||{}; ['rawCount','finalCount','rawFoundCount','reviewCount','unusedCount','duplicateCount','duplicateRawCount'].forEach(id => $(id).textContent=s[id]||0); $('possibleFinalCount').textContent=s.possibleDuplicateFinalCount||0; $('possibleRawCount').textContent=s.possibleDuplicateRawCount||0; $('autoAccept').value=s.autoAcceptThreshold||$('autoAccept').value; $('autoReject').value=s.autoRejectThreshold??$('autoReject').value; $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!state.session||busy; renderReview(); renderMatches(); renderTagPlan(); renderFinalTagPlan(); }
+                    function renderReview() { const view=$('reviewView'); const rows=(state.matches||[]).filter(row=>row.status==='NEEDS_REVIEW'); if(!rows.length){view.innerHTML='<p class="muted">Nothing needs review. The middle score band will appear here after a scan.</p>';return;} view.innerHTML=''; for(const row of rows){ const item=document.createElement('div'); item.className='review-grid'; item.innerHTML=`<div class="asset">${thumbHtml(row.finishedAssetId)}<div><div class="asset-name">${escapeHtml(row.finishedPath)}</div><div class="asset-id">Final asset: ${escapeHtml(row.finishedAssetId)}</div></div></div><div class="asset">${row.rawAssetId?thumbHtml(row.rawAssetId):'<div class="thumb"></div>'}<div><div class="asset-name">${escapeHtml(row.rawPath||'No RAW candidate')}</div><div class="asset-id">${row.rawAssetId?'RAW asset: '+escapeHtml(row.rawAssetId):''}</div><div class="${scoreClass(row.score)}">${row.score}% match</div><div class="muted">${escapeHtml(row.reason)}</div></div></div><div class="review-actions"><button ${row.rawAssetId?'':'disabled'} data-action="accept">Accept match</button><button class="secondary" data-action="reject">No matching RAW</button></div>`; item.querySelector('[data-action="accept"]')?.addEventListener('click',()=>updateStatus(row.index,'ACCEPTED')); item.querySelector('[data-action="reject"]')?.addEventListener('click',()=>updateStatus(row.index,'REJECTED')); view.appendChild(item); } loadThumbnails(view); }
+                    function renderMatches() { const body=$('matchesBody'); body.innerHTML=''; for(const row of state.matches||[]){const tr=document.createElement('tr');tr.innerHTML=`<td>${escapeHtml(row.statusLabel)}</td><td class="${scoreClass(row.score)}">${row.score}%</td><td><div class="asset">${thumbHtml(row.finishedAssetId)}<div class="path">${escapeHtml(row.finishedPath)}</div></div></td><td><div class="asset">${row.rawAssetId?thumbHtml(row.rawAssetId):''}<div class="path">${escapeHtml(row.rawPath||'')}</div></div></td><td>${escapeHtml(row.reason)}</td>`;body.appendChild(tr);} loadThumbnails(body); }
+                    function renderTagPlan(){const body=$('tagPlanBody');body.innerHTML='';for(const row of state.tagPlan||[]){const tr=document.createElement('tr');tr.innerHTML=`<td><strong>${escapeHtml(row.tag)}</strong></td><td class="path">${escapeHtml(row.rawPath)}</td><td class="path">${escapeHtml(row.matchedFinalPath||'')}</td><td>${row.score||0}%</td><td>${escapeHtml(row.basis)}</td>`;body.appendChild(tr);}}
+                    function renderFinalTagPlan(){const body=$('finalTagPlanBody');body.innerHTML='';for(const row of state.finalTagPlan||[]){const tr=document.createElement('tr');tr.innerHTML=`<td><strong>${escapeHtml(row.tag)}</strong></td><td class="path">${escapeHtml(row.finalPath)}</td><td class="path">${escapeHtml(row.matchedRawPath||'')}</td><td>${row.score||0}%</td><td>${escapeHtml(row.basis)}</td>`;body.appendChild(tr);}}
+                    function thumbHtml(assetId){return `<img class="thumb" data-asset-id="${escapeHtml(assetId||'')}" alt="Asset thumbnail">`;}
+                    async function loadThumbnails(root){for(const image of root.querySelectorAll('img[data-asset-id]')){const id=image.dataset.assetId;if(!id||thumbs.has(id)){if(thumbs.has(id))image.src=thumbs.get(id);continue;} thumbs.set(id,''); try{const response=await apiFetch('/api/immich/thumbnail?assetId='+encodeURIComponent(id));if(!response.ok)throw new Error();const url=URL.createObjectURL(await response.blob());thumbs.set(id,url);document.querySelectorAll(`img[data-asset-id="${CSS.escape(id)}"]`).forEach(img=>img.src=url);}catch{image.alt='Preview unavailable';}}}
+                    function showTab(tab){['review','matches','tagPlan','finalTagPlan'].forEach(name=>{$(name+'Tab').classList.toggle('active',name===tab);$(name+'View').style.display=name===tab?'':'none';});}
+                    function showProgress(text,percent){$('progressShell').hidden=false;$('progressText').textContent=text||'Working…';const bar=$('progress');bar.classList.toggle('indeterminate',percent==null||percent<0);bar.firstElementChild.style.width=percent>=0?percent+'%':'';}
+                    function hideProgress(){$('progressShell').hidden=true;}
+                    function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session;}
+                    async function apiFetch(url,options={},retry=true){const headers=new Headers(options.headers||{});const token=localStorage.getItem('pcaAccessToken');if(token)headers.set('X-PCA-Token',token);const response=await fetch(url,{...options,headers});if(response.status===401&&retry){const entered=prompt('Access token');if(entered!==null){localStorage.setItem('pcaAccessToken',entered);return apiFetch(url,options,false);}}return response;}
+                    async function restoreOnLoad(){try{const statusResponse=await apiFetch('/api/status');const status=await statusResponse.json();if(!statusResponse.ok)throw new Error(status.error||'Could not restore app state');if(status.hasSession){const sessionResponse=await apiFetch('/api/session');const restored=await sessionResponse.json();if(!sessionResponse.ok)throw new Error(restored.error||'Could not restore scan session');state=restored;render();}const job=status.scanJob;if(job?.state==='RUNNING'){setBusy(true);showProgress(job.message,job.percent);await pollScan();}else if(job?.state==='INTERRUPTED'){message(job.error||job.message);}}catch(error){message(error.message);}}
+                    render(); restoreOnLoad();
                   </script>
                 </body>
                 </html>

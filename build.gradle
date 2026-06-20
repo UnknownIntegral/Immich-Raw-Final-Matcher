@@ -28,13 +28,6 @@ tasks.register('runServer', JavaExec) {
     mainClass = 'com.photocull.server.ServerApp'
 }
 
-tasks.register('runDesktop', JavaExec) {
-    group = 'application'
-    description = 'Runs the legacy Windows desktop app.'
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'com.photocull.app.App'
-}
-
 tasks.register('serverStartScripts', CreateStartScripts) {
     group = 'distribution'
     description = 'Creates launcher scripts for the web UI server.'
@@ -66,37 +59,6 @@ tasks.register('packageServerZip', Zip) {
     dependsOn tasks.named('installServerDist')
     from layout.buildDirectory.dir('install/photo-culling-assistant-server')
     archiveFileName = 'photo-culling-assistant-server.zip'
-    destinationDirectory = layout.buildDirectory.dir('distributions')
-}
-
-tasks.register('desktopStartScripts', CreateStartScripts) {
-    group = 'distribution'
-    description = 'Creates launcher scripts for the legacy Windows desktop app.'
-    mainClass = 'com.photocull.app.App'
-    applicationName = 'photo-culling-assistant-desktop'
-    outputDir = layout.buildDirectory.dir('desktopScripts').get().asFile
-    classpath = tasks.named('jar').map { it.outputs.files }.get() + sourceSets.main.runtimeClasspath
-}
-
-tasks.register('installDesktopDist', Copy) {
-    group = 'distribution'
-    description = 'Installs a runnable legacy Windows desktop distribution.'
-    dependsOn tasks.named('jar'), tasks.named('desktopStartScripts')
-    into layout.buildDirectory.dir('install/photo-culling-assistant-desktop')
-    from(tasks.named('desktopStartScripts')) {
-        into 'bin'
-    }
-    from(tasks.named('jar')) {
-        into 'lib'
-    }
-}
-
-tasks.register('packageDesktopZip', Zip) {
-    group = 'distribution'
-    description = 'Builds a runnable zip distribution for the legacy Windows desktop app.'
-    dependsOn tasks.named('installDesktopDist')
-    from layout.buildDirectory.dir('install/photo-culling-assistant-desktop')
-    archiveFileName = 'photo-culling-assistant-desktop.zip'
     destinationDirectory = layout.buildDirectory.dir('distributions')
 }
 

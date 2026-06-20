@@ -18,12 +18,20 @@ public final class MatchEngine {
     private static final int AMBIGUOUS_RAW_MATCH_MARGIN = 8;
     private static final int AMBIGUOUS_RAW_MATCH_MIN_SCORE = 70;
 
-    private final LocalImageMatcher imageMatcher = new LocalImageMatcher();
-
     public List<MatchResult> match(
             List<PhotoFile> rawFiles,
             List<PhotoFile> finishedFiles,
             int threshold,
+            Consumer<String> progress
+    ) {
+        return match(rawFiles, finishedFiles, threshold, 0, progress);
+    }
+
+    public List<MatchResult> match(
+            List<PhotoFile> rawFiles,
+            List<PhotoFile> finishedFiles,
+            int autoAcceptThreshold,
+            int autoRejectThreshold,
             Consumer<String> progress
     ) {
         Map<String, List<PhotoFile>> rawsByStem = groupBy(rawFiles, PhotoFile::normalizedStem);
@@ -56,13 +64,13 @@ public final class MatchEngine {
                         null,
                         0,
                         "No RAW candidate found from filename or metadata",
-                        MatchStatus.NEEDS_REVIEW,
+                        MatchStatus.AUTO_REJECTED,
                         null
                 ));
             } else {
                 ScoredMatch second = scoredCandidates.size() < 2 ? null : scoredCandidates.get(1);
-                boolean ambiguousRawMatch = second != null
-                        && second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, threshold - 10)
+                boolean ambiguousRawMatch = best.score() > autoRejectThreshold && second != null
+                        && second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, autoAcceptThreshold - 10)
                         && best.score() - second.score() <= AMBIGUOUS_RAW_MATCH_MARGIN;
                 if (ambiguousRawMatch) {
                     results.add(new MatchResult(
@@ -75,7 +83,9 @@ public final class MatchEngine {
                             null
                     ));
                 } else {
-                    MatchStatus status = best.score() >= threshold ? MatchStatus.AUTO_ACCEPTED : MatchStatus.NEEDS_REVIEW;
+                    MatchStatus status = best.score() >= autoAcceptThreshold
+                            ? MatchStatus.AUTO_ACCEPTED
+                            : best.score() <= autoRejectThreshold ? MatchStatus.AUTO_REJECTED : MatchStatus.NEEDS_REVIEW;
                     results.add(new MatchResult(finished, best.raw(), best.score(), best.reason(), status, null));
                 }
             }
@@ -245,17 +255,7 @@ public final class MatchEngine {
     }
 
     private int visualScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
-        int score = imageMatcher.visualScore(finished, raw);
-        if (score >= 94) {
-            reasons.add("local visual match is very strong");
-        } else if (score >= 82) {
-            reasons.add("local visual match is strong");
-        } else if (score >= 68) {
-            reasons.add("local visual match is plausible");
-        } else if (score >= 48) {
-            reasons.add("local visual match is weak");
-        }
-        return score;
+        return 0;
     }
 
     private int folderDateScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {

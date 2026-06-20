@@ -2,6 +2,7 @@ package com.photocull.matcher;
 
 public enum MatchStatus {
     AUTO_ACCEPTED("Auto accepted"),
+    AUTO_REJECTED("Auto rejected"),
     NEEDS_REVIEW("Needs review"),
     ACCEPTED("Accepted"),
     REJECTED("Rejected"),
@@ -18,4 +19,3 @@ public enum MatchStatus {
         return label;
     }
 }
-

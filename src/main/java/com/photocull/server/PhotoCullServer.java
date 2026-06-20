@@ -4,11 +4,8 @@ import com.photocull.immich.ImmichConfig;
 import com.photocull.immich.ImmichTagApplyResult;
 import com.photocull.immich.ImmichUser;
 import com.photocull.immich.ImmichWorkflow;
-import com.photocull.matcher.FileScanner;
-import com.photocull.matcher.MatchEngine;
 import com.photocull.matcher.MatchResult;
 import com.photocull.matcher.MatchStatus;
-import com.photocull.matcher.PhotoFile;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -18,18 +15,23 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 
 public final class PhotoCullServer {
     private final int port;
     private final Path configDir;
     private final ImmichConfig immichConfig;
     private final String accessToken;
+    private final SessionStore sessionStore;
     private volatile ScanSession session;
+    private volatile ScanJob scanJob;
+    private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor();
     private HttpServer server;
 
     public PhotoCullServer(int port, Path configDir) {
@@ -45,19 +47,23 @@ public final class PhotoCullServer {
         this.configDir = configDir;
         this.immichConfig = immichConfig;
         this.accessToken = accessToken == null ? "" : accessToken.trim();
+        this.sessionStore = new SessionStore(configDir);
     }
 
     public void start() throws IOException {
         Files.createDirectories(configDir);
+        restorePersistedState();
         server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", this::handleIndex);
         server.createContext("/api/status", this::handleStatus);
-        server.createContext("/api/scan", this::handleScan);
+        server.createContext("/api/session", this::handleSession);
         server.createContext("/api/match/status", this::handleMatchStatus);
         server.createContext("/api/tag-plan", this::handleTagPlan);
         server.createContext("/api/dry-run", this::handleDryRun);
         server.createContext("/api/immich/users", this::handleImmichUsers);
         server.createContext("/api/immich/scan", this::handleImmichScan);
+        server.createContext("/api/immich/scan/status", this::handleImmichScanStatus);
+        server.createContext("/api/immich/thumbnail", this::handleImmichThumbnail);
         server.createContext("/api/immich/apply-tags", this::handleImmichApplyTags);
         server.setExecutor(Executors.newFixedThreadPool(Math.max(4, Runtime.getRuntime().availableProcessors())));
         server.start();
@@ -82,8 +88,8 @@ public final class PhotoCullServer {
         sendJson(exchange, statusJson());
     }
 
-    private void handleScan(HttpExchange exchange) throws IOException {
-        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+    private void handleSession(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
             send(exchange, 405, "application/json", error("Method not allowed"));
             return;
         }
@@ -91,29 +97,11 @@ public final class PhotoCullServer {
             return;
         }
 
-        try {
-            Map<String, String> form = FormData.parse(FormData.body(exchange));
-            Path rawRoot = Path.of(require(form, "rawRoot"));
-            Path finalRoot = Path.of(require(form, "finalRoot"));
-            int threshold = parseThreshold(form.getOrDefault("threshold", "90"));
-
-            if (!Files.isDirectory(rawRoot)) {
-                throw new IllegalArgumentException("RAW root is not a readable directory.");
-            }
-            if (!Files.isDirectory(finalRoot)) {
-                throw new IllegalArgumentException("Final image root is not a readable directory.");
-            }
-
-            FileScanner scanner = new FileScanner();
-            List<PhotoFile> raws = scanner.scanRawFiles(rawRoot);
-            List<PhotoFile> finals = scanner.scanFinishedFiles(finalRoot);
-            List<MatchResult> results = new MatchEngine().match(raws, finals, threshold, ignored -> {
-            });
-            session = new ScanSession(raws, finals, results, threshold);
-            sendJson(exchange, sessionJson(session));
-        } catch (Exception ex) {
-            send(exchange, 400, "application/json", error(ex.getMessage()));
+        if (session == null) {
+            send(exchange, 409, "application/json", error("No completed scan session exists yet."));
+            return;
         }
+        sendJson(exchange, sessionJson(session));
     }
 
     private void handleMatchStatus(HttpExchange exchange) throws IOException {
@@ -134,6 +122,7 @@ public final class PhotoCullServer {
             int index = parseInt(require(form, "index"), -1);
             MatchStatus status = MatchStatus.valueOf(require(form, "status"));
             session.updateStatus(index, status);
+            persistState();
             sendJson(exchange, sessionJson(session));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -202,15 +191,86 @@ public final class PhotoCullServer {
             return;
         }
 
+        if (scanJob != null && "RUNNING".equals(scanJob.json().get("state"))) {
+            send(exchange, 409, "application/json", error("An Immich scan is already running."));
+            return;
+        }
         try {
             Map<String, String> form = FormData.parse(FormData.body(exchange));
-            int threshold = parseThreshold(form.getOrDefault("threshold", "90"));
-            ScanSession scanSession = new ImmichWorkflow(immichConfig).scan(threshold, ignored -> {
+            int autoAccept = parseThreshold(form.getOrDefault("autoAccept", "90"));
+            int autoReject = parseThreshold(form.getOrDefault("autoReject", "50"));
+            if (autoReject >= autoAccept) {
+                throw new IllegalArgumentException("Auto-reject must be lower than auto-accept.");
+            }
+            ScanJob job = new ScanJob(this::persistState);
+            scanJob = job;
+            persistState();
+            scanExecutor.submit(() -> {
+                try {
+                    ScanSession scanSession = new ImmichWorkflow(immichConfig).scan(autoAccept, autoReject, job::progress);
+                    job.progress("Finding duplicates...");
+                    scanSession.duplicateCount();
+                    scanSession.duplicateRawCount();
+                    session = scanSession;
+                    job.complete();
+                } catch (Exception ex) {
+                    job.fail(ex);
+                }
             });
-            session = scanSession;
-            sendJson(exchange, sessionJson(scanSession));
+            send(exchange, 202, "application/json; charset=utf-8", Json.object(Map.of("job", job.json())));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
+        }
+    }
+
+    private void handleImmichScanStatus(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (scanJob == null) {
+            send(exchange, 404, "application/json", error("No Immich scan job exists yet."));
+            return;
+        }
+        sendJson(exchange, Json.object(Map.of("job", scanJob.json())));
+    }
+
+    private void handleImmichThumbnail(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (session == null) {
+            send(exchange, 409, "application/json", error("No scan session exists yet."));
+            return;
+        }
+        String assetId = query(exchange).get("assetId");
+        if (assetId == null || assetId.isBlank()) {
+            send(exchange, 400, "application/json", error("Missing assetId."));
+            return;
+        }
+        boolean rawAsset = session.raws().stream().anyMatch(file -> assetId.equals(file.immichAssetId()));
+        boolean finalAsset = session.finals().stream().anyMatch(file -> assetId.equals(file.immichAssetId()));
+        if (!rawAsset && !finalAsset) {
+            send(exchange, 404, "application/json", error("Asset is not part of the active scan session."));
+            return;
+        }
+        try {
+            byte[] thumbnail = new ImmichWorkflow(immichConfig).thumbnail(assetId, rawAsset);
+            exchange.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+            exchange.getResponseHeaders().set("Content-Type", "image/jpeg");
+            exchange.sendResponseHeaders(200, thumbnail.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(thumbnail);
+            }
+        } catch (Exception ex) {
+            send(exchange, 502, "application/json", error(ex.getMessage()));
         }
     }
 
@@ -254,6 +314,9 @@ public final class PhotoCullServer {
         values.put("hasSession", session != null);
         values.put("immich", immichStatus());
         values.put("accessProtected", accessProtected());
+        if (scanJob != null) {
+            values.put("scanJob", scanJob.json());
+        }
         if (session != null) {
             values.put("session", sessionSummary(session));
         }
@@ -286,7 +349,11 @@ public final class PhotoCullServer {
         values.put("rawFoundCount", scanSession.rawFoundCount());
         values.put("noRawCount", scanSession.noRawCount());
         values.put("duplicateCount", scanSession.duplicateCount());
-        values.put("threshold", scanSession.threshold());
+        values.put("possibleDuplicateFinalCount", scanSession.possibleDuplicateFinalCount());
+        values.put("duplicateRawCount", scanSession.duplicateRawCount());
+        values.put("possibleDuplicateRawCount", scanSession.possibleDuplicateRawCount());
+        values.put("autoAcceptThreshold", scanSession.threshold());
+        values.put("autoRejectThreshold", scanSession.autoRejectThreshold());
         return values;
     }
 
@@ -407,6 +474,42 @@ public final class PhotoCullServer {
 
     private int parseThreshold(String value) {
         return Math.max(0, Math.min(100, parseInt(value, 90)));
+    }
+
+    private void restorePersistedState() {
+        try {
+            SessionStore.StoredState stored = sessionStore.load(this::persistState);
+            session = stored.session();
+            scanJob = stored.job();
+            if (scanJob != null) {
+                scanJob.interrupt();
+            }
+        } catch (Exception ex) {
+            System.err.println("Ignoring unreadable persisted scan state: " + ex.getMessage());
+        }
+    }
+
+    private void persistState() {
+        try {
+            sessionStore.save(session, scanJob);
+        } catch (IOException ex) {
+            System.err.println("Could not persist scan state: " + ex.getMessage());
+        }
+    }
+
+    private Map<String, String> query(HttpExchange exchange) {
+        Map<String, String> values = new LinkedHashMap<>();
+        String raw = exchange.getRequestURI().getRawQuery();
+        if (raw == null || raw.isBlank()) {
+            return values;
+        }
+        for (String part : raw.split("&")) {
+            String[] pair = part.split("=", 2);
+            String key = URLDecoder.decode(pair[0], StandardCharsets.UTF_8);
+            String value = pair.length == 2 ? URLDecoder.decode(pair[1], StandardCharsets.UTF_8) : "";
+            values.put(key, value);
+        }
+        return values;
     }
 
     private String error(String message) {

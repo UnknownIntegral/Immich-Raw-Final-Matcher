@@ -36,6 +36,8 @@ public final class Tests {
         createsAssetIdTagPlans();
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
+        autoRejectsLowScoresOutsideReviewQueue();
+        separatesExactAndPossibleDuplicates();
         flagsFinalsWithMultipleStrongRawCandidates();
         fallsBackToSharedImmichApiKey();
         scansRawAndFinalAssetsWithSeparateClients();
@@ -189,7 +191,8 @@ public final class Tests {
                 Instant.parse("2024-01-01T10:00:00Z"),
                 Instant.parse("2024-01-01T10:00:00Z"),
                 "",
-                ""
+                "",
+                "same-final-content"
         );
         PhotoFile smallFinal = PhotoFile.fromImmichAsset(
                 "final-small",
@@ -200,7 +203,8 @@ public final class Tests {
                 Instant.parse("2024-01-01T10:00:00Z"),
                 Instant.parse("2024-01-01T10:00:00Z"),
                 "",
-                ""
+                "",
+                "same-final-content"
         );
 
         List<MatchResult> matches = new MatchEngine().match(List.of(raw), List.of(largeFinal, smallFinal), 90, ignored -> {
@@ -213,6 +217,30 @@ public final class Tests {
         assertEquals(2L, rawFound, "both duplicate finals can be RAW Found");
         assertEquals("final-small", duplicate.finalAssetId(), "smaller duplicate final asset");
         assertEquals(1L, session.duplicateCount(), "duplicate count");
+    }
+
+    private static void autoRejectsLowScoresOutsideReviewQueue() {
+        PhotoFile raw = photo("raw-1", "raw-owner", "IMG_0001.CR3");
+        PhotoFile finalImage = photo("final-1", "final-owner", "EXPORT_ONLY.jpg");
+        List<MatchResult> matches = new MatchEngine().match(List.of(raw), List.of(finalImage), 95, 90, ignored -> {
+        });
+        ScanSession session = new ScanSession(List.of(raw), List.of(finalImage), matches, 95, 90);
+
+        assertEquals(MatchStatus.AUTO_REJECTED, matches.get(0).status(), "zero-score result auto rejected");
+        assertEquals(0L, session.reviewCount(), "auto rejection stays out of review");
+        assertEquals(1L, session.unusedCount(), "auto-rejected RAW is unused");
+    }
+
+    private static void separatesExactAndPossibleDuplicates() {
+        PhotoFile exactFirst = photo("raw-1", "raw-owner", "IMG_0001.CR3", 200, "same-content");
+        PhotoFile exactSecond = photo("raw-2", "raw-owner", "IMG_0002.CR3", 100, "same-content");
+        PhotoFile possibleFirst = photo("raw-3", "raw-owner", "COPY_0003.CR3");
+        PhotoFile possibleSecond = photo("raw-4", "raw-owner", "COPY_0003.CR3");
+        ScanSession session = new ScanSession(
+                List.of(exactFirst, exactSecond, possibleFirst, possibleSecond), List.of(), List.of(), 90, 50);
+
+        assertEquals(1L, session.duplicateRawCount(), "exact RAW duplicate count");
+        assertEquals(1L, session.possibleDuplicateRawCount(), "filename-only RAW duplicate count");
     }
 
     private static void flagsFinalsWithMultipleStrongRawCandidates() {
@@ -298,8 +326,8 @@ public final class Tests {
         PhotoFile rawDuplicate = photo("raw-duplicate", "raw-user", "DUP_0004.CR3");
         PhotoFile finalMatched = photo("final-matched", "final-user", "IMG_0001.jpg");
         PhotoFile finalUnmatched = photo("final-unmatched", "final-user", "IMG_0003.jpg");
-        PhotoFile finalDuplicateLarge = photo("final-large", "final-user", "DUP_0004.jpg", 5000);
-        PhotoFile finalDuplicateSmall = photo("final-small", "final-user", "DUP_0004.jpg", 2500);
+        PhotoFile finalDuplicateLarge = photo("final-large", "final-user", "DUP_0004.jpg", 5000, "same-final-content");
+        PhotoFile finalDuplicateSmall = photo("final-small", "final-user", "DUP_0004.jpg", 2500, "same-final-content");
         List<MatchResult> matches = List.of(
                 new MatchResult(finalMatched, rawKeeper, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null),
                 new MatchResult(finalUnmatched, null, 0, "no RAW", MatchStatus.REJECTED, null),
@@ -388,6 +416,7 @@ public final class Tests {
                 "/upload/" + fileName,
                 "",
                 "IMAGE",
+                "",
                 Instant.parse("2024-01-01T10:00:00Z"),
                 Instant.parse("2024-01-01T10:00:00Z"),
                 Instant.parse("2024-01-01T10:00:00Z"),
@@ -403,6 +432,10 @@ public final class Tests {
     }
 
     private static PhotoFile photo(String id, String ownerId, String fileName, long sizeBytes) {
+        return photo(id, ownerId, fileName, sizeBytes, null);
+    }
+
+    private static PhotoFile photo(String id, String ownerId, String fileName, long sizeBytes, String checksum) {
         return PhotoFile.fromImmichAsset(
                 id,
                 ownerId,
@@ -412,7 +445,8 @@ public final class Tests {
                 Instant.parse("2024-01-01T10:00:00Z"),
                 Instant.parse("2024-01-01T10:00:00Z"),
                 "",
-                ""
+                "",
+                checksum
         );
     }
 
@@ -466,6 +500,11 @@ public final class Tests {
         public int tagAssets(String tagId, List<String> assetIds) {
             taggedAssetIds.addAll(assetIds);
             return assetIds.size();
+        }
+
+        @Override
+        public byte[] thumbnail(String assetId) {
+            return new byte[0];
         }
     }
 }

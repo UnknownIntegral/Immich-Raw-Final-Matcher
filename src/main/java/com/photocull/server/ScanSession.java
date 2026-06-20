@@ -15,17 +15,52 @@ import java.util.Map;
 import java.util.Set;
 
 public final class ScanSession {
-    private final Instant createdAt = Instant.now();
+    private final Instant createdAt;
     private final List<PhotoFile> raws;
     private final List<PhotoFile> finals;
     private final List<MatchResult> results;
-    private final int threshold;
+    private final int autoAcceptThreshold;
+    private final int autoRejectThreshold;
 
     public ScanSession(List<PhotoFile> raws, List<PhotoFile> finals, List<MatchResult> results, int threshold) {
+        this(raws, finals, results, threshold, 0);
+    }
+
+    public ScanSession(
+            List<PhotoFile> raws,
+            List<PhotoFile> finals,
+            List<MatchResult> results,
+            int autoAcceptThreshold,
+            int autoRejectThreshold
+    ) {
+        this(Instant.now(), raws, finals, results, autoAcceptThreshold, autoRejectThreshold);
+    }
+
+    static ScanSession restored(
+            Instant createdAt,
+            List<PhotoFile> raws,
+            List<PhotoFile> finals,
+            List<MatchResult> results,
+            int autoAcceptThreshold,
+            int autoRejectThreshold
+    ) {
+        return new ScanSession(createdAt, raws, finals, results, autoAcceptThreshold, autoRejectThreshold);
+    }
+
+    private ScanSession(
+            Instant createdAt,
+            List<PhotoFile> raws,
+            List<PhotoFile> finals,
+            List<MatchResult> results,
+            int autoAcceptThreshold,
+            int autoRejectThreshold
+    ) {
+        this.createdAt = createdAt == null ? Instant.now() : createdAt;
         this.raws = List.copyOf(raws);
         this.finals = List.copyOf(finals);
         this.results = new ArrayList<>(results);
-        this.threshold = threshold;
+        this.autoAcceptThreshold = autoAcceptThreshold;
+        this.autoRejectThreshold = autoRejectThreshold;
     }
 
     public Instant createdAt() {
@@ -45,7 +80,11 @@ public final class ScanSession {
     }
 
     public int threshold() {
-        return threshold;
+        return autoAcceptThreshold;
+    }
+
+    public int autoRejectThreshold() {
+        return autoRejectThreshold;
     }
 
     public synchronized void updateStatus(int index, MatchStatus status) {
@@ -115,7 +154,7 @@ public final class ScanSession {
     }
 
     public synchronized List<FinalTagPlanItem> finalTagPlan(String rawFoundTag, String noRawTag, String duplicateTag) {
-        Set<Path> duplicateFinalPaths = duplicateFinalPaths();
+        Set<Path> duplicateFinalPaths = duplicatePaths(finals, true);
         Map<Path, MatchResult> resultByFinalPath = new HashMap<>();
         List<FinalTagPlanItem> plan = new ArrayList<>();
         for (MatchResult result : results) {
@@ -131,7 +170,9 @@ public final class ScanSession {
                         result.raw().immichAssetId(),
                         result.score()
                 ));
-            } else if (result.raw() == null || result.status() == MatchStatus.REJECTED) {
+            } else if (result.raw() == null
+                    || result.status() == MatchStatus.REJECTED
+                    || result.status() == MatchStatus.AUTO_REJECTED) {
                 plan.add(new FinalTagPlanItem(
                         result.finished(),
                         noRawTag,
@@ -197,15 +238,31 @@ public final class ScanSession {
     }
 
     public long duplicateCount() {
-        return duplicateFinalPaths().size();
+        return duplicatePaths(finals, true).size();
+    }
+
+    public long possibleDuplicateFinalCount() {
+        return duplicatePaths(finals, false).size();
+    }
+
+    public long duplicateRawCount() {
+        return duplicatePaths(raws, true).size();
+    }
+
+    public long possibleDuplicateRawCount() {
+        return duplicatePaths(raws, false).size();
     }
 
     private Set<Path> duplicateFinalPaths() {
+        return duplicatePaths(finals, false);
+    }
+
+    private Set<Path> duplicatePaths(List<PhotoFile> files, boolean exactOnly) {
         Map<String, List<PhotoFile>> grouped = new HashMap<>();
-        for (PhotoFile finished : finals) {
-            String key = duplicateKey(finished);
+        for (PhotoFile file : files) {
+            String key = duplicateKey(file, exactOnly);
             if (!key.isBlank()) {
-                grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(finished);
+                grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(file);
             }
         }
 
@@ -214,17 +271,22 @@ public final class ScanSession {
             if (group.size() < 2) {
                 continue;
             }
-            long largestSize = group.stream().mapToLong(PhotoFile::sizeBytes).max().orElse(0);
-            for (PhotoFile finished : group) {
-                if (finished.sizeBytes() < largestSize) {
-                    duplicates.add(finished.path());
-                }
+            group.sort(Comparator.comparingLong(PhotoFile::sizeBytes).reversed()
+                    .thenComparing(PhotoFile::lastModified, Comparator.reverseOrder())
+                    .thenComparing(file -> file.immichAssetId() == null ? "" : file.immichAssetId()));
+            for (int i = 1; i < group.size(); i++) {
+                duplicates.add(group.get(i).path());
             }
         }
         return duplicates;
     }
 
-    private String duplicateKey(PhotoFile file) {
-        return file.normalizedStem();
+    private String duplicateKey(PhotoFile file, boolean exactOnly) {
+        if (exactOnly && file.contentHash() != null && !file.contentHash().isBlank()) {
+            return "hash:" + file.contentHash();
+        }
+        return exactOnly || file.contentHash() != null && !file.contentHash().isBlank()
+                ? ""
+                : "name:" + file.normalizedStem();
     }
 }

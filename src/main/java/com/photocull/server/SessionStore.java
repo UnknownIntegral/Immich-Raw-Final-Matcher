@@ -1,0 +1,167 @@
+package com.photocull.server;
+
+import com.photocull.matcher.MatchResult;
+import com.photocull.matcher.MatchStatus;
+import com.photocull.matcher.PhotoFile;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+final class SessionStore {
+    private final Path stateFile;
+
+    SessionStore(Path configDir) {
+        stateFile = configDir.resolve("scan-session.json");
+    }
+
+    synchronized void save(ScanSession session, ScanJob job) throws IOException {
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("version", 1);
+        state.put("session", session == null ? null : sessionJson(session));
+        state.put("job", job == null ? null : job.json());
+        Path tempFile = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
+        Files.createDirectories(stateFile.getParent());
+        Files.writeString(tempFile, Json.object(state), StandardCharsets.UTF_8);
+        try {
+            Files.move(tempFile, stateFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(tempFile, stateFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    synchronized StoredState load(Runnable jobChanged) throws IOException {
+        if (!Files.exists(stateFile)) {
+            return new StoredState(null, null);
+        }
+        Map<String, Object> state = Json.parseObject(Files.readString(stateFile, StandardCharsets.UTF_8));
+        ScanSession session = object(state.get("session")).isEmpty() ? null : session(object(state.get("session")));
+        ScanJob job = object(state.get("job")).isEmpty() ? null : ScanJob.restored(object(state.get("job")), jobChanged);
+        return new StoredState(session, job);
+    }
+
+    private Map<String, Object> sessionJson(ScanSession session) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("createdAt", session.createdAt());
+        values.put("autoAcceptThreshold", session.threshold());
+        values.put("autoRejectThreshold", session.autoRejectThreshold());
+        values.put("raws", session.raws().stream().map(this::photoJson).toList());
+        values.put("finals", session.finals().stream().map(this::photoJson).toList());
+        Map<Path, Integer> rawIndexes = indexes(session.raws());
+        Map<Path, Integer> finalIndexes = indexes(session.finals());
+        List<Map<String, Object>> results = new ArrayList<>();
+        for (MatchResult result : session.results()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("finalIndex", finalIndexes.get(result.finished().path()));
+            row.put("rawIndex", result.raw() == null ? null : rawIndexes.get(result.raw().path()));
+            row.put("score", result.score());
+            row.put("reason", result.reason());
+            row.put("status", result.status().name());
+            results.add(row);
+        }
+        values.put("results", results);
+        return values;
+    }
+
+    private ScanSession session(Map<String, Object> values) {
+        List<PhotoFile> raws = array(values.get("raws")).stream().map(item -> photo(object(item))).toList();
+        List<PhotoFile> finals = array(values.get("finals")).stream().map(item -> photo(object(item))).toList();
+        List<MatchResult> results = new ArrayList<>();
+        for (Object item : array(values.get("results"))) {
+            Map<String, Object> row = object(item);
+            int finalIndex = number(row.get("finalIndex"), -1);
+            int rawIndex = number(row.get("rawIndex"), -1);
+            if (finalIndex < 0 || finalIndex >= finals.size()) {
+                continue;
+            }
+            PhotoFile raw = rawIndex >= 0 && rawIndex < raws.size() ? raws.get(rawIndex) : null;
+            MatchStatus status;
+            try {
+                status = MatchStatus.valueOf(string(row.get("status"), MatchStatus.NEEDS_REVIEW.name()));
+            } catch (IllegalArgumentException ignored) {
+                status = MatchStatus.NEEDS_REVIEW;
+            }
+            results.add(new MatchResult(finals.get(finalIndex), raw, number(row.get("score"), 0),
+                    string(row.get("reason"), ""), status, null));
+        }
+        return ScanSession.restored(instant(values.get("createdAt")), raws, finals, results,
+                number(values.get("autoAcceptThreshold"), 90), number(values.get("autoRejectThreshold"), 50));
+    }
+
+    private Map<Path, Integer> indexes(List<PhotoFile> photos) {
+        Map<Path, Integer> indexes = new HashMap<>();
+        for (int i = 0; i < photos.size(); i++) {
+            indexes.put(photos.get(i).path(), i);
+        }
+        return indexes;
+    }
+
+    private Map<String, Object> photoJson(PhotoFile photo) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("assetId", photo.immichAssetId());
+        values.put("ownerId", photo.immichOwnerId());
+        values.put("path", photo.path());
+        values.put("sizeBytes", photo.sizeBytes());
+        values.put("lastModified", photo.lastModified());
+        values.put("captureTime", photo.captureTime());
+        values.put("make", photo.make());
+        values.put("model", photo.model());
+        values.put("contentHash", photo.contentHash());
+        return values;
+    }
+
+    private PhotoFile photo(Map<String, Object> values) {
+        String path = string(values.get("path"), "");
+        String fileName = Path.of(path.isBlank() ? "unknown" : path).getFileName().toString();
+        return PhotoFile.fromImmichAsset(string(values.get("assetId"), null), string(values.get("ownerId"), null),
+                fileName, path, numberLong(values.get("sizeBytes"), 0), instant(values.get("lastModified")),
+                instantOrNull(values.get("captureTime")), string(values.get("make"), ""), string(values.get("model"), ""),
+                string(values.get("contentHash"), null));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> object(Object value) {
+        return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+    }
+
+    private static List<Object> array(Object value) {
+        return value instanceof List<?> list ? new ArrayList<>(list) : List.of();
+    }
+
+    private static int number(Object value, int fallback) {
+        return value instanceof Number number ? number.intValue() : fallback;
+    }
+
+    private static long numberLong(Object value, long fallback) {
+        return value instanceof Number number ? number.longValue() : fallback;
+    }
+
+    private static String string(Object value, String fallback) {
+        return value == null || value.toString().isBlank() ? fallback : value.toString();
+    }
+
+    private static Instant instant(Object value) {
+        Instant parsed = instantOrNull(value);
+        return parsed == null ? Instant.now() : parsed;
+    }
+
+    private static Instant instantOrNull(Object value) {
+        try {
+            return value == null || value.toString().isBlank() ? null : Instant.parse(value.toString());
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    record StoredState(ScanSession session, ScanJob job) {
+    }
+}

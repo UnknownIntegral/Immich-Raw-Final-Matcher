@@ -129,6 +129,11 @@ public final class ImmichClient implements ImmichApi {
         return tagged;
     }
 
+    @Override
+    public byte[] thumbnail(String assetId) throws IOException, InterruptedException {
+        return sendBytes("GET", "/assets/" + segment(assetId) + "/thumbnail");
+    }
+
     private String send(String method, String path, String body) throws IOException, InterruptedException {
         requireApiConfigured();
         String target = config.normalizedUrl() + path;
@@ -164,6 +169,37 @@ public final class ImmichClient implements ImmichApi {
         if (status < 200 || status >= 300) {
             throw new IOException("Immich API " + method + " " + path + " (" + target + ") failed with HTTP "
                     + status + ": " + response.body());
+        }
+        return response.body();
+    }
+
+    private byte[] sendBytes(String method, String path) throws IOException, InterruptedException {
+        requireApiConfigured();
+        String target = config.normalizedUrl() + path;
+        URI uri;
+        try {
+            uri = URI.create(target);
+        } catch (IllegalArgumentException ex) {
+            throw requestFailure(method, path, target, ex);
+        }
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .version(HttpClient.Version.HTTP_1_1)
+                .header("Accept", "image/*")
+                .header("x-api-key", apiKey)
+                .GET()
+                .build();
+        HttpResponse<byte[]> response;
+        try {
+            response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException ex) {
+            throw requestFailure(method, path, target, ex);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw requestFailure(method, path, target, ex);
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("Immich API " + method + " " + path + " (" + target + ") failed with HTTP "
+                    + response.statusCode());
         }
         return response.body();
     }

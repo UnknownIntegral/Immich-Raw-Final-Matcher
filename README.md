@@ -1,16 +1,14 @@
 # Photo Culling Assistant
 
-Photo Culling Assistant is being focused on one target: an Unraid-hosted Immich helper that matches RAW assets from one Immich account to final images from another Immich account. It tags final-image assets as `RAW Found`, `No RAW`, or `duplicate`, and RAW assets as `Keeper` or `not used`, so cleanup happens inside Immich.
-
-The old Windows desktop mover is now legacy-only. It still exists for reference and local experiments, but the supported direction is the Unraid web server and Immich tagging workflow.
+Photo Culling Assistant is an Unraid-hosted Immich helper that matches RAW assets from one Immich account to final images from another. It runs entirely through the Immich API and never moves, renames, or deletes media files.
 
 ## Target Workflow
 
 1. Connect to Immich with either one shared API key or separate RAW and final-account API keys.
 2. Read RAW-account assets from Immich.
 3. Read edited-image-account assets from Immich.
-4. Match edited images to RAW originals using filenames, capture time, metadata, and local visual hashes.
-5. Review uncertain matches in the web UI.
+4. Match edited images to RAW originals using filenames, capture time, and Immich metadata.
+5. Auto-accept high-confidence matches, auto-reject low-confidence matches, and review the score band in between with Immich thumbnails.
 6. Dry-run the tag plan.
 7. Apply `RAW Found` / `No RAW` / `duplicate` to final images and `Keeper` / `not used` to RAWs through the Immich API.
 8. Delete or archive `not used` RAWs from Immich after reviewing the tag in Immich.
@@ -21,10 +19,11 @@ The app must not move, rename, or delete files inside Immich-managed folders dir
 
 Ready now:
 
-- Local web UI server on port `8356`.
-- Filesystem folder scan for RAW and edited-image folders.
-- Local matching and confidence scoring.
-- Review UI for accepting or rejecting proposed matches.
+- Immich-only web UI server on port `8356` with progress reporting for lengthy scans.
+- Review queue with side-by-side final and RAW thumbnails.
+- Configurable auto-accept and auto-reject thresholds.
+- Exact duplicate counts from Immich checksums, plus filename-only possible-duplicate counts.
+- Completed scan sessions and review decisions persist under the app config directory and restore when the web UI reconnects.
 - CSV dry-run manifest with proposed tags for both Immich accounts.
 - Immich API client using `x-api-key`.
 - Optional separate `RAW_IMMICH_API_KEY` and `FINAL_IMMICH_API_KEY` values for user-scoped Immich libraries.
@@ -41,7 +40,7 @@ Not ready yet for the final Immich workflow:
 - Smoke testing against a real Immich instance.
 - Stronger authentication if this is ever exposed beyond a trusted LAN.
 - Broader automated tests for API failure handling, duplicate/conflicting matches, and tag application safety.
-- Optional local media path mapping for visual hash reads from Unraid mounts.
+- Smoke testing against the target Immich version's thumbnail API.
 
 ## Matching Signals
 
@@ -49,12 +48,13 @@ Not ready yet for the final Immich workflow:
 - Shared trailing image number, such as `IMG_1234` and `Wedding_1234`.
 - Best-effort EXIF/TIFF capture time from JPEG and many TIFF-like RAW formats.
 - Camera make/model when available.
-- Local-only visual similarity using perceptual hashes from finished images and best-effort embedded RAW JPEG previews.
 - Weak filename similarity for renamed exports.
-- Duplicate finals with the same filename stem; only lower-file-size copies receive the `duplicate` tag.
+- Exact duplicate finals use matching Immich checksums; filename-only collisions are reported as possible duplicates and are not tagged.
 - Ambiguous final images with multiple strong RAW candidates are forced into review.
 
-All matching and image recognition runs locally. The app should not upload images, hashes, or metadata to external services.
+All matching runs in the app using metadata returned by Immich. The browser receives thumbnails only through the app's authenticated proxy; Immich API keys never reach the browser.
+
+If the container restarts during a scan, the active HTTP scan cannot resume from its previous request cursor; it is marked as interrupted. The most recent completed session and its review decisions are retained.
 
 ## Run
 
@@ -72,12 +72,6 @@ gradle runServer
 
 Then open `http://localhost:8356`.
 
-Legacy Windows desktop app:
-
-```powershell
-gradle runDesktop
-```
-
 ## Build
 
 ```powershell
@@ -86,14 +80,6 @@ gradle packageServerZip
 ```
 
 The web UI server zip is written to `build/distributions/photo-culling-assistant-server.zip`.
-
-Legacy Windows desktop zip:
-
-```powershell
-gradle packageDesktopZip
-```
-
-The legacy desktop zip is written to `build/distributions/photo-culling-assistant-desktop.zip`.
 
 ## Immich API Keys
 

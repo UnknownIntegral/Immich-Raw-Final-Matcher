@@ -45,7 +45,12 @@ public final class ImmichWorkflow {
         return usersClient.users();
     }
 
-    public ScanSession scan(int threshold, Consumer<String> progress) throws IOException, InterruptedException {
+    public byte[] thumbnail(String assetId, boolean rawAsset) throws IOException, InterruptedException {
+        config.requireConfigured();
+        return (rawAsset ? rawClient : finalClient).thumbnail(assetId);
+    }
+
+    public ScanSession scan(int autoAcceptThreshold, int autoRejectThreshold, Consumer<String> progress) throws IOException, InterruptedException {
         config.requireConfigured();
         progress.accept("Reading RAW-account assets from Immich...");
         List<PhotoFile> raws = rawClient.imageAssetsForOwner(config.rawUserId(), RAW_EXTENSIONS, progress)
@@ -60,7 +65,13 @@ public final class ImmichWorkflow {
                 .toList();
 
         progress.accept("Matching " + finals.size() + " edited images to " + raws.size() + " RAW assets...");
-        return new ScanSession(raws, finals, new MatchEngine().match(raws, finals, threshold, progress), threshold);
+        return new ScanSession(raws, finals,
+                new MatchEngine().match(raws, finals, autoAcceptThreshold, autoRejectThreshold, progress),
+                autoAcceptThreshold, autoRejectThreshold);
+    }
+
+    public ScanSession scan(int threshold, Consumer<String> progress) throws IOException, InterruptedException {
+        return scan(threshold, 0, progress);
     }
 
     public ImmichTagApplyResult applyTags(ScanSession session, Path configDir) throws IOException, InterruptedException {

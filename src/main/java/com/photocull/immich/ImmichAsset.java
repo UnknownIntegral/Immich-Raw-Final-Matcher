@@ -14,6 +14,7 @@ public record ImmichAsset(
         String originalPath,
         String originalMimeType,
         String type,
+        String checksum,
         Instant fileCreatedAt,
         Instant fileModifiedAt,
         Instant localDateTime,
@@ -31,6 +32,7 @@ public record ImmichAsset(
                 string(values.get("originalPath")),
                 string(values.get("originalMimeType")),
                 string(values.get("type")),
+                string(values.get("checksum")),
                 instant(values.get("fileCreatedAt")),
                 instant(values.get("fileModifiedAt")),
                 instant(values.get("localDateTime")),
@@ -51,7 +53,8 @@ public record ImmichAsset(
                 fileModifiedAt,
                 bestCaptureTime(),
                 make,
-                model
+                model,
+                checksum
         );
     }
 

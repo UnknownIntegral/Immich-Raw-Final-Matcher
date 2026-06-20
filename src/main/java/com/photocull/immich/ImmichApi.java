@@ -17,4 +17,6 @@ public interface ImmichApi {
     ImmichTag ensureTag(String name) throws IOException, InterruptedException;
 
     int tagAssets(String tagId, List<String> assetIds) throws IOException, InterruptedException;
+
+    byte[] thumbnail(String assetId) throws IOException, InterruptedException;
 }
