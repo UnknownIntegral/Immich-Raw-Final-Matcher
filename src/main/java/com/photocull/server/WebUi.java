@@ -39,7 +39,7 @@ public final class WebUi {
                         <button id="scanButton" type="submit">Scan Immich</button>
                       </form>
                       <div class="progress-shell" id="progressShell" hidden><div id="progress" class="progress indeterminate"><div></div></div><span id="progressText" class="status">Starting...</span></div>
-                      <div class="actions" style="margin-top:14px"><button id="undoButton" class="secondary" disabled>Undo last review decision</button><button id="dryRunButton" class="secondary" disabled>Write dry-run manifest</button><button id="applyTagsButton" disabled>Apply Immich tags</button><span id="message" class="status"></span></div>
+                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Write dry-run manifest</button><button id="applyTagsButton" disabled>Apply Immich tags</button><span id="message" class="status"></span></div>
                     </section>
                     <section>
                       <h2>Scan summary</h2>
@@ -77,7 +77,6 @@ public final class WebUi {
                     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
                     const scoreClass = score => score >= 90 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low';
                     $('scanForm').addEventListener('submit', startScan);
-                    $('undoButton').addEventListener('click', undoLastReviewDecision);
                     $('dryRunButton').addEventListener('click', writeDryRun);
                     $('applyTagsButton').addEventListener('click', applyTags);
                     $('matchesPrevious').addEventListener('click', () => loadMatches(Math.max(0, state.matchesOffset - MATCHES_PAGE_SIZE)));
@@ -191,14 +190,16 @@ public final class WebUi {
                       ['rawCount','finalCount','rawFoundCount','reviewCount','unusedCount','duplicateCount','duplicateRawCount'].forEach(id => $(id).textContent=s[id]||0);
                       $('possibleFinalCount').textContent=s.possibleDuplicateFinalCount||0; $('possibleRawCount').textContent=s.possibleDuplicateRawCount||0;
                       $('autoAccept').value=s.autoAcceptThreshold||$('autoAccept').value; $('autoReject').value=s.autoRejectThreshold??$('autoReject').value;
-                      $('undoButton').disabled=!s.canUndoLastReviewDecision||busy;
                       $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!state.session||busy;
                     }
                     function renderActiveTab() { if(activeTab==='review') renderReview(); if(activeTab==='matches') renderMatches(); if(activeTab==='tagPlan') renderTagPlan(); if(activeTab==='finalTagPlan') renderFinalTagPlan(); }
                     function renderReview() {
                       const view=$('reviewView'); const row=state.reviewRows[0];
-                      if(!row) { view.innerHTML=state.session?.reviewCount ? '<p class="muted">Loading review queue...</p>' : '<p class="muted">Nothing needs review. The middle score band will appear here after a scan.</p>'; return; }
-                      view.innerHTML=`<div class="review-header"><strong>${state.session?.reviewCount||0} reviews remaining</strong><span class="muted">Keyboard: A accept, R reject</span></div><div class="review-grid"><div class="review-asset"><div class="review-preview">${reviewThumbHtml(row.finishedAssetId, 'Final image preview')}</div><div class="review-caption"><div class="review-caption-label">Final image</div><div class="asset-name">${escapeHtml(row.finishedPath)}</div><div class="asset-id">Final asset: ${escapeHtml(row.finishedAssetId)}</div></div></div><div class="review-asset"><div class="review-preview">${row.rawAssetId?reviewThumbHtml(row.rawAssetId, 'RAW image preview'):'<div class="review-missing">No RAW candidate</div>'}</div><div class="review-caption"><div class="review-caption-label">RAW candidate</div><div class="asset-name">${escapeHtml(row.rawPath||'No RAW candidate')}</div><div class="asset-id">${row.rawAssetId?'RAW asset: '+escapeHtml(row.rawAssetId):''}</div></div></div><div class="review-match-details"><div class="${scoreClass(row.score)}">${row.score}% match</div><div class="muted">${escapeHtml(row.reason)}</div></div><div class="review-actions"><button ${row.rawAssetId&&!busy?'':'disabled'} data-action="accept">Accept match</button><button class="secondary" ${busy?'disabled':''} data-action="reject">No matching RAW</button></div></div>`;
+                      const undoDisabled=!state.session?.canUndoLastReviewDecision||busy;
+                      const header=`<div class="review-header"><strong>${state.session?.reviewCount||0} reviews remaining</strong><span class="muted">Keyboard: A accept, R reject</span><button class="secondary" ${undoDisabled?'disabled':''} data-action="undo">Undo last decision</button></div>`;
+                      if(!row) { view.innerHTML=header+(state.session?.reviewCount ? '<p class="muted">Loading review queue...</p>' : '<p class="muted">Nothing needs review. The middle score band will appear here after a scan.</p>'); view.querySelector('[data-action="undo"]')?.addEventListener('click',undoLastReviewDecision); return; }
+                      view.innerHTML=header+`<div class="review-grid"><div class="review-asset"><div class="review-preview">${reviewThumbHtml(row.finishedAssetId, 'Final image preview')}</div><div class="review-caption"><div class="review-caption-label">Final image</div><div class="asset-name">${escapeHtml(row.finishedPath)}</div><div class="asset-id">Final asset: ${escapeHtml(row.finishedAssetId)}</div></div></div><div class="review-asset"><div class="review-preview">${row.rawAssetId?reviewThumbHtml(row.rawAssetId, 'RAW image preview'):'<div class="review-missing">No RAW candidate</div>'}</div><div class="review-caption"><div class="review-caption-label">RAW candidate</div><div class="asset-name">${escapeHtml(row.rawPath||'No RAW candidate')}</div><div class="asset-id">${row.rawAssetId?'RAW asset: '+escapeHtml(row.rawAssetId):''}</div></div></div><div class="review-match-details"><div class="${scoreClass(row.score)}">${row.score}% match</div><div class="muted">${escapeHtml(row.reason)}</div></div><div class="review-actions"><button ${row.rawAssetId&&!busy?'':'disabled'} data-action="accept">Accept match</button><button class="secondary" ${busy?'disabled':''} data-action="reject">No matching RAW</button></div></div>`;
+                      view.querySelector('[data-action="undo"]')?.addEventListener('click',undoLastReviewDecision);
                       view.querySelector('[data-action="accept"]')?.addEventListener('click',()=>updateStatus(row,'ACCEPTED'));
                       view.querySelector('[data-action="reject"]')?.addEventListener('click',()=>updateStatus(row,'REJECTED'));
                       observeThumbnails(view,view);

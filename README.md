@@ -56,6 +56,18 @@ All matching runs in the app using metadata returned by Immich. The browser rece
 
 If the container restarts during a scan, the active HTTP scan cannot resume from its previous request cursor; it is marked as interrupted. The most recent completed session and its review decisions are retained.
 
+## Reviewing in Chunks
+
+Each accept, reject, and undo decision is written immediately to `/config/scan-session.json`. You can stop reviewing and restart the container at any time; when it starts again, open the web UI and continue from the remaining review queue. Do not start a new scan unless you intentionally want to replace the saved session.
+
+The `/config` directory must be mapped to persistent host storage. The included Unraid template maps it to `/mnt/user/appdata/photo-culling-assistant`; retain that mapping when updating or recreating the container. For a direct Docker run, use an equivalent volume mapping:
+
+```sh
+docker run -d --name photo-culling-assistant -p 8356:8356 \
+  -v /mnt/user/appdata/photo-culling-assistant:/config \
+  ghcr.io/YOUR_GITHUB_USER/photo-culling-assistant:latest
+```
+
 ## Run
 
 Unraid/web UI server:

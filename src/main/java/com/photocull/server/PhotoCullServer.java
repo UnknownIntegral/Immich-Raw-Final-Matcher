@@ -211,7 +211,7 @@ public final class PhotoCullServer {
                 throw new IllegalArgumentException("Review status must be ACCEPTED or REJECTED.");
             }
             MatchResult updated = session.updateStatus(index, status);
-            schedulePersistState();
+            persistStateImmediately();
             sendJson(exchange, matchStatusJson(index, updated));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -328,7 +328,7 @@ public final class PhotoCullServer {
         try {
             MatchResult restored = session.undoLastReviewDecision();
             int index = session.results().indexOf(restored);
-            schedulePersistState();
+            persistStateImmediately();
             sendJson(exchange, matchStatusJson(index, restored));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -612,6 +612,20 @@ public final class PhotoCullServer {
             pendingPersistence = persistenceExecutor.schedule(this::persistStateNow,
                     PERSISTENCE_DELAY_MILLIS, TimeUnit.MILLISECONDS);
         }
+    }
+
+    /**
+     * Review choices are user checkpoints, so acknowledge them only after the
+     * state file has been updated instead of waiting for the normal debounce.
+     */
+    private void persistStateImmediately() throws IOException {
+        synchronized (persistenceLock) {
+            if (pendingPersistence != null) {
+                pendingPersistence.cancel(false);
+                pendingPersistence = null;
+            }
+        }
+        sessionStore.save(session, scanJob);
     }
 
     private void flushPersistedState() {
