@@ -37,7 +37,7 @@ public final class Tests {
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
-        doesNotAutoAcceptBurstByTimestamp();
+        autoAcceptsUniqueExactTimestamp();
         updatesCachedSessionMetricsDuringReview();
         undoesLastReviewDecision();
         keepsSessionAndReviewUpdatesSmall();
@@ -225,7 +225,10 @@ public final class Tests {
 
     private static void autoRejectsLowScoresOutsideReviewQueue() {
         PhotoFile raw = photo("raw-1", "raw-owner", "IMG_0001.CR3");
-        PhotoFile finalImage = photo("final-1", "final-owner", "EXPORT_ONLY.jpg");
+        PhotoFile finalImage = PhotoFile.fromImmichAsset(
+                "final-1", "final-owner", "EXPORT_ONLY.jpg", "/upload/EXPORT_ONLY.jpg", 1,
+                Instant.parse("2024-01-01T11:00:00Z"), Instant.parse("2024-01-01T11:00:00Z"), "", ""
+        );
         List<MatchResult> matches = new MatchEngine().match(List.of(raw), List.of(finalImage), 95, 90, ignored -> {
         });
         ScanSession session = new ScanSession(List.of(raw), List.of(finalImage), matches, 95, 90);
@@ -279,7 +282,7 @@ public final class Tests {
         assertEquals(1L, session.finalTagPlan().stream().filter(item -> item.tag().equals("RAW Found")).count(), "tag plan RAW found count");
     }
 
-    private static void doesNotAutoAcceptBurstByTimestamp() {
+    private static void autoAcceptsUniqueExactTimestamp() {
         Instant captureTime = Instant.parse("2024-01-01T10:00:00Z");
         PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "BURST_A.CR3", "/raw/BURST_A.CR3", 1,
                 captureTime, captureTime, "", "");
@@ -287,8 +290,8 @@ public final class Tests {
                 captureTime, captureTime, "", "");
 
         MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
-        assertEquals(60, match.score(), "same-timestamp burst score");
-        assertEquals(MatchStatus.NEEDS_REVIEW, match.status(), "same timestamp requires review");
+        assertEquals(100, match.score(), "exact timestamp score");
+        assertEquals(MatchStatus.AUTO_ACCEPTED, match.status(), "unique exact timestamp is auto accepted");
     }
 
     private static void undoesLastReviewDecision() {

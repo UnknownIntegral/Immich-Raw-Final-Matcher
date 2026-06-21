@@ -70,7 +70,7 @@ public final class MatchEngine {
             } else {
                 ScoredMatch second = scoredCandidates.size() < 2 ? null : scoredCandidates.get(1);
                 boolean ambiguousRawMatch = best.score() > autoRejectThreshold && second != null && (
-                        burstCandidates(finished, best.raw(), second.raw())
+                        exactTimestampCollision(finished, best.raw(), second.raw())
                                 || second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, autoAcceptThreshold - 10)
                                 && best.score() - second.score() <= AMBIGUOUS_RAW_MATCH_MARGIN
                 );
@@ -154,14 +154,13 @@ public final class MatchEngine {
         return low;
     }
 
-    private boolean burstCandidates(PhotoFile finished, PhotoFile firstRaw, PhotoFile secondRaw) {
-        return withinBurstWindow(finished.captureTime(), firstRaw.captureTime())
-                && withinBurstWindow(finished.captureTime(), secondRaw.captureTime());
+    private boolean exactTimestampCollision(PhotoFile finished, PhotoFile firstRaw, PhotoFile secondRaw) {
+        return sameInstant(finished.captureTime(), firstRaw.captureTime())
+                && sameInstant(finished.captureTime(), secondRaw.captureTime());
     }
 
-    private boolean withinBurstWindow(Instant first, Instant second) {
-        return first != null && second != null
-                && Math.abs(Duration.between(first, second).toSeconds()) <= 2;
+    private boolean sameInstant(Instant first, Instant second) {
+        return first != null && first.equals(second);
     }
 
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
@@ -182,7 +181,7 @@ public final class MatchEngine {
             score += 8;
         }
         score += metadataScore + folderDateScore;
-        score = Math.max(0, Math.min(99, score));
+        score = Math.max(0, Math.min(100, score));
 
         if (reasons.isEmpty()) {
             reasons.add("Weak filename similarity");
@@ -217,11 +216,15 @@ public final class MatchEngine {
 
     private int timeScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
         if (finished.captureTime() != null && raw.captureTime() != null) {
-            long seconds = Math.abs(Duration.between(finished.captureTime(), raw.captureTime()).toSeconds());
-            // Cameras frequently create several burst frames in the same second.  Capture time is
-            // useful to narrow the search, but on its own it must not be strong enough to auto-accept.
+            Duration difference = Duration.between(finished.captureTime(), raw.captureTime()).abs();
+            if (difference.isZero()) {
+                reasons.add("exact capture timestamp");
+                return 100;
+            }
+            long seconds = difference.toSeconds();
+            // Near timestamps are common in a burst, so they remain review-level signals.
             if (seconds == 0) {
-                reasons.add("same capture timestamp (burst-safe, requires another signal)");
+                reasons.add("capture times are less than 1 second apart");
                 return 60;
             }
             if (seconds == 1) {
