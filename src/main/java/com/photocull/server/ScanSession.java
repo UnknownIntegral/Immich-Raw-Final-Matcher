@@ -21,6 +21,21 @@ public final class ScanSession {
     private final List<MatchResult> results;
     private final int autoAcceptThreshold;
     private final int autoRejectThreshold;
+    private final Set<String> rawAssetIds;
+    private final Set<String> finalAssetIds;
+    private final Set<Path> duplicateFinalPaths;
+    private final Set<Path> possibleDuplicateFinalPaths;
+    private final Set<Path> duplicateRawPaths;
+    private final Set<Path> possibleDuplicateRawPaths;
+    private final Map<Path, Integer> rawRowsByPath;
+    private final Map<Path, Integer> acceptedByRaw = new HashMap<>();
+    private final Map<Path, Integer> unresolvedByRaw = new HashMap<>();
+    private long reviewCount;
+    private long rawReviewCount;
+    private long keeperCount;
+    private long unusedCount;
+    private long rawFoundCount;
+    private long noRawCount;
 
     public ScanSession(List<PhotoFile> raws, List<PhotoFile> finals, List<MatchResult> results, int threshold) {
         this(raws, finals, results, threshold, 0);
@@ -61,6 +76,14 @@ public final class ScanSession {
         this.results = new ArrayList<>(results);
         this.autoAcceptThreshold = autoAcceptThreshold;
         this.autoRejectThreshold = autoRejectThreshold;
+        this.rawAssetIds = assetIds(this.raws);
+        this.finalAssetIds = assetIds(this.finals);
+        this.duplicateFinalPaths = Set.copyOf(duplicatePaths(this.finals, true));
+        this.possibleDuplicateFinalPaths = Set.copyOf(duplicatePaths(this.finals, false));
+        this.duplicateRawPaths = Set.copyOf(duplicatePaths(this.raws, true));
+        this.possibleDuplicateRawPaths = Set.copyOf(duplicatePaths(this.raws, false));
+        this.rawRowsByPath = pathCounts(this.raws);
+        initializeMetrics();
     }
 
     public Instant createdAt() {
@@ -75,7 +98,7 @@ public final class ScanSession {
         return finals;
     }
 
-    public List<MatchResult> results() {
+    public synchronized List<MatchResult> results() {
         return List.copyOf(results);
     }
 
@@ -87,7 +110,15 @@ public final class ScanSession {
         return autoRejectThreshold;
     }
 
-    public synchronized void updateStatus(int index, MatchStatus status) {
+    public boolean isRawAsset(String assetId) {
+        return rawAssetIds.contains(assetId);
+    }
+
+    public boolean isFinalAsset(String assetId) {
+        return finalAssetIds.contains(assetId);
+    }
+
+    public synchronized MatchResult updateStatus(int index, MatchStatus status) {
         if (index < 0 || index >= results.size()) {
             throw new IllegalArgumentException("Unknown match index: " + index);
         }
@@ -95,7 +126,20 @@ public final class ScanSession {
         if (current.rawPathOrNull() == null && status != MatchStatus.REJECTED) {
             throw new IllegalArgumentException("Cannot accept a row with no RAW match.");
         }
-        results.set(index, current.withStatus(status));
+        if (current.status() == status) {
+            return current;
+        }
+
+        Path rawPath = current.rawPathOrNull();
+        boolean wasUnused = rawPath != null && isUnused(rawPath);
+        removeMetrics(current);
+        MatchResult updated = current.withStatus(status);
+        results.set(index, updated);
+        addMetrics(updated);
+        if (rawPath != null) {
+            updateUnusedCount(rawPath, wasUnused);
+        }
+        return updated;
     }
 
     public synchronized List<TagPlanItem> tagPlan() {
@@ -111,7 +155,7 @@ public final class ScanSession {
             if (rawPath == null) {
                 continue;
             }
-            if (result.status() == MatchStatus.AUTO_ACCEPTED || result.status() == MatchStatus.ACCEPTED) {
+            if (isAccepted(result.status())) {
                 MatchResult existing = keeperMatches.get(rawPath);
                 if (existing == null || result.score() > existing.score()) {
                     keeperMatches.put(rawPath, result);
@@ -154,13 +198,11 @@ public final class ScanSession {
     }
 
     public synchronized List<FinalTagPlanItem> finalTagPlan(String rawFoundTag, String noRawTag, String duplicateTag) {
-        Set<Path> duplicateFinalPaths = duplicatePaths(finals, true);
         Map<Path, MatchResult> resultByFinalPath = new HashMap<>();
         List<FinalTagPlanItem> plan = new ArrayList<>();
         for (MatchResult result : results) {
             resultByFinalPath.put(result.finished().path(), result);
-            if (result.raw() != null
-                    && (result.status() == MatchStatus.AUTO_ACCEPTED || result.status() == MatchStatus.ACCEPTED)) {
+            if (result.raw() != null && isAccepted(result.status())) {
                 plan.add(new FinalTagPlanItem(
                         result.finished(),
                         rawFoundTag,
@@ -170,9 +212,7 @@ public final class ScanSession {
                         result.raw().immichAssetId(),
                         result.score()
                 ));
-            } else if (result.raw() == null
-                    || result.status() == MatchStatus.REJECTED
-                    || result.status() == MatchStatus.AUTO_REJECTED) {
+            } else if (result.raw() == null || isRejected(result.status())) {
                 plan.add(new FinalTagPlanItem(
                         result.finished(),
                         noRawTag,
@@ -206,58 +246,153 @@ public final class ScanSession {
         return plan;
     }
 
-    public long reviewCount() {
-        return results.stream().filter(result -> result.status() == MatchStatus.NEEDS_REVIEW).count();
+    public synchronized long reviewCount() {
+        return reviewCount;
     }
 
-    public long rawReviewCount() {
-        return results.stream()
-                .filter(result -> result.status() == MatchStatus.NEEDS_REVIEW)
-                .filter(result -> result.rawPathOrNull() != null)
-                .count();
+    public synchronized long rawReviewCount() {
+        return rawReviewCount;
     }
 
-    public long keeperCount() {
-        return results.stream().filter(result -> result.raw() != null)
-                .filter(result -> result.status() == MatchStatus.AUTO_ACCEPTED || result.status() == MatchStatus.ACCEPTED)
-                .map(result -> result.raw().path())
-                .distinct()
-                .count();
+    public synchronized long keeperCount() {
+        return keeperCount;
     }
 
-    public long unusedCount() {
-        return tagPlan().stream().filter(item -> item.matchedFinalPath() == null).count();
+    public synchronized long unusedCount() {
+        return unusedCount;
     }
 
-    public long rawFoundCount() {
-        return finalTagPlan().stream().filter(item -> item.matchedRawPath() != null && item.tag().equals("RAW Found")).count();
+    public synchronized long rawFoundCount() {
+        return rawFoundCount;
     }
 
-    public long noRawCount() {
-        return finalTagPlan().stream().filter(item -> item.tag().equals("No RAW")).count();
+    public synchronized long noRawCount() {
+        return noRawCount;
     }
 
     public long duplicateCount() {
-        return duplicatePaths(finals, true).size();
+        return duplicateFinalPaths.size();
     }
 
     public long possibleDuplicateFinalCount() {
-        return duplicatePaths(finals, false).size();
+        return possibleDuplicateFinalPaths.size();
     }
 
     public long duplicateRawCount() {
-        return duplicatePaths(raws, true).size();
+        return duplicateRawPaths.size();
     }
 
     public long possibleDuplicateRawCount() {
-        return duplicatePaths(raws, false).size();
+        return possibleDuplicateRawPaths.size();
     }
 
-    private Set<Path> duplicateFinalPaths() {
-        return duplicatePaths(finals, false);
+    private void initializeMetrics() {
+        for (MatchResult result : results) {
+            addMetrics(result);
+        }
+        for (Path rawPath : rawRowsByPath.keySet()) {
+            if (isUnused(rawPath)) {
+                unusedCount += rawRowsByPath.get(rawPath);
+            }
+        }
     }
 
-    private Set<Path> duplicatePaths(List<PhotoFile> files, boolean exactOnly) {
+    private void addMetrics(MatchResult result) {
+        Path rawPath = result.rawPathOrNull();
+        if (result.status() == MatchStatus.NEEDS_REVIEW) {
+            reviewCount++;
+            if (rawPath != null) {
+                rawReviewCount++;
+                increment(unresolvedByRaw, rawPath);
+            }
+        }
+        if (rawPath != null && isAccepted(result.status())) {
+            rawFoundCount++;
+            int acceptedBefore = acceptedByRaw.getOrDefault(rawPath, 0);
+            increment(acceptedByRaw, rawPath);
+            if (acceptedBefore == 0) {
+                keeperCount++;
+            }
+        }
+        if (result.raw() == null || isRejected(result.status())) {
+            noRawCount++;
+        }
+    }
+
+    private void removeMetrics(MatchResult result) {
+        Path rawPath = result.rawPathOrNull();
+        if (result.status() == MatchStatus.NEEDS_REVIEW) {
+            reviewCount--;
+            if (rawPath != null) {
+                rawReviewCount--;
+                decrement(unresolvedByRaw, rawPath);
+            }
+        }
+        if (rawPath != null && isAccepted(result.status())) {
+            rawFoundCount--;
+            if (acceptedByRaw.getOrDefault(rawPath, 0) == 1) {
+                keeperCount--;
+            }
+            decrement(acceptedByRaw, rawPath);
+        }
+        if (result.raw() == null || isRejected(result.status())) {
+            noRawCount--;
+        }
+    }
+
+    private void updateUnusedCount(Path rawPath, boolean wasUnused) {
+        boolean isUnused = isUnused(rawPath);
+        if (wasUnused == isUnused) {
+            return;
+        }
+        int rawRows = rawRowsByPath.getOrDefault(rawPath, 0);
+        unusedCount += isUnused ? rawRows : -rawRows;
+    }
+
+    private boolean isUnused(Path rawPath) {
+        return acceptedByRaw.getOrDefault(rawPath, 0) == 0 && unresolvedByRaw.getOrDefault(rawPath, 0) == 0;
+    }
+
+    private static boolean isAccepted(MatchStatus status) {
+        return status == MatchStatus.AUTO_ACCEPTED || status == MatchStatus.ACCEPTED;
+    }
+
+    private static boolean isRejected(MatchStatus status) {
+        return status == MatchStatus.REJECTED || status == MatchStatus.AUTO_REJECTED;
+    }
+
+    private static void increment(Map<Path, Integer> counts, Path path) {
+        counts.merge(path, 1, Integer::sum);
+    }
+
+    private static void decrement(Map<Path, Integer> counts, Path path) {
+        int next = counts.getOrDefault(path, 0) - 1;
+        if (next <= 0) {
+            counts.remove(path);
+        } else {
+            counts.put(path, next);
+        }
+    }
+
+    private static Map<Path, Integer> pathCounts(List<PhotoFile> files) {
+        Map<Path, Integer> counts = new HashMap<>();
+        for (PhotoFile file : files) {
+            counts.merge(file.path(), 1, Integer::sum);
+        }
+        return counts;
+    }
+
+    private static Set<String> assetIds(List<PhotoFile> files) {
+        Set<String> assetIds = new HashSet<>();
+        for (PhotoFile file : files) {
+            if (file.immichAssetId() != null && !file.immichAssetId().isBlank()) {
+                assetIds.add(file.immichAssetId());
+            }
+        }
+        return Set.copyOf(assetIds);
+    }
+
+    private static Set<Path> duplicatePaths(List<PhotoFile> files, boolean exactOnly) {
         Map<String, List<PhotoFile>> grouped = new HashMap<>();
         for (PhotoFile file : files) {
             String key = duplicateKey(file, exactOnly);
@@ -281,7 +416,7 @@ public final class ScanSession {
         return duplicates;
     }
 
-    private String duplicateKey(PhotoFile file, boolean exactOnly) {
+    private static String duplicateKey(PhotoFile file, boolean exactOnly) {
         if (exactOnly && file.contentHash() != null && !file.contentHash().isBlank()) {
             return "hash:" + file.contentHash();
         }

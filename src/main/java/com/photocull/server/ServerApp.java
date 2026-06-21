@@ -2,6 +2,8 @@ package com.photocull.server;
 
 import com.photocull.immich.ImmichConfig;
 
+import java.util.concurrent.CountDownLatch;
+
 public final class ServerApp {
     private ServerApp() {
     }
@@ -11,6 +13,7 @@ public final class ServerApp {
         PhotoCullServer server = new PhotoCullServer(port, AppPaths.configDir(), ImmichConfig.fromEnvironment());
         server.start();
         System.out.println("Photo Culling Assistant web UI running at http://localhost:" + port);
+        new CountDownLatch(1).await();
     }
 
     private static int readPort() {

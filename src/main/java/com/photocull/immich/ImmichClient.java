@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,7 @@ public final class ImmichClient implements ImmichApi {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(10))
                 .build();
     }
 
@@ -146,6 +148,7 @@ public final class ImmichClient implements ImmichApi {
 
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .version(HttpClient.Version.HTTP_1_1)
+                .timeout(Duration.ofSeconds(60))
                 .header("Accept", "application/json")
                 .header("x-api-key", apiKey);
 
@@ -184,6 +187,7 @@ public final class ImmichClient implements ImmichApi {
         }
         HttpRequest request = HttpRequest.newBuilder(uri)
                 .version(HttpClient.Version.HTTP_1_1)
+                .timeout(Duration.ofSeconds(30))
                 .header("Accept", "image/*")
                 .header("x-api-key", apiKey)
                 .GET()

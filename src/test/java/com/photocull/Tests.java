@@ -37,6 +37,8 @@ public final class Tests {
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
+        updatesCachedSessionMetricsDuringReview();
+        keepsSessionAndReviewUpdatesSmall();
         separatesExactAndPossibleDuplicates();
         flagsFinalsWithMultipleStrongRawCandidates();
         fallsBackToSharedImmichApiKey();
@@ -229,6 +231,68 @@ public final class Tests {
         assertEquals(MatchStatus.AUTO_REJECTED, matches.get(0).status(), "zero-score result auto rejected");
         assertEquals(0L, session.reviewCount(), "auto rejection stays out of review");
         assertEquals(1L, session.unusedCount(), "auto-rejected RAW is unused");
+    }
+
+    private static void updatesCachedSessionMetricsDuringReview() {
+        PhotoFile rawFirst = photo("raw-1", "raw-owner", "IMG_0001.CR3");
+        PhotoFile rawSecond = photo("raw-2", "raw-owner", "IMG_0002.CR3");
+        PhotoFile firstFinal = photo("final-1", "final-owner", "IMG_0001.jpg");
+        PhotoFile secondFinal = photo("final-2", "final-owner", "IMG_0001-edit.jpg");
+        PhotoFile noRawFinal = photo("final-3", "final-owner", "EXPORT_ONLY.jpg");
+        ScanSession session = new ScanSession(
+                List.of(rawFirst, rawSecond),
+                List.of(firstFinal, secondFinal, noRawFinal),
+                List.of(
+                        new MatchResult(firstFinal, rawFirst, 80, "review", MatchStatus.NEEDS_REVIEW, null),
+                        new MatchResult(secondFinal, rawFirst, 75, "review", MatchStatus.NEEDS_REVIEW, null),
+                        new MatchResult(noRawFinal, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null)
+                ),
+                90,
+                50
+        );
+
+        assertEquals(2L, session.reviewCount(), "initial review count");
+        assertEquals(2L, session.rawReviewCount(), "initial raw review count");
+        assertEquals(0L, session.keeperCount(), "initial keeper count");
+        assertEquals(1L, session.unusedCount(), "initial unused count");
+        assertEquals(0L, session.rawFoundCount(), "initial RAW found count");
+        assertEquals(1L, session.noRawCount(), "initial no RAW count");
+
+        session.updateStatus(0, MatchStatus.ACCEPTED);
+        assertEquals(1L, session.reviewCount(), "review count after acceptance");
+        assertEquals(1L, session.rawReviewCount(), "raw review count after acceptance");
+        assertEquals(1L, session.keeperCount(), "keeper count after acceptance");
+        assertEquals(1L, session.unusedCount(), "unused count after acceptance");
+        assertEquals(1L, session.rawFoundCount(), "RAW found count after acceptance");
+        assertEquals(1L, session.noRawCount(), "no RAW count after acceptance");
+
+        session.updateStatus(1, MatchStatus.REJECTED);
+        assertEquals(0L, session.reviewCount(), "review count after rejection");
+        assertEquals(0L, session.rawReviewCount(), "raw review count after rejection");
+        assertEquals(1L, session.keeperCount(), "keeper count after rejection");
+        assertEquals(1L, session.unusedCount(), "unused count after rejection");
+        assertEquals(1L, session.rawFoundCount(), "RAW found count after rejection");
+        assertEquals(2L, session.noRawCount(), "no RAW count after rejection");
+        assertEquals(1L, session.tagPlan().stream().filter(item -> item.tag().equals("not used")).count(), "tag plan unused count");
+        assertEquals(1L, session.finalTagPlan().stream().filter(item -> item.tag().equals("RAW Found")).count(), "tag plan RAW found count");
+    }
+
+    private static void keepsSessionAndReviewUpdatesSmall() throws Exception {
+        PhotoFile raw = photo("raw-1", "raw-owner", "IMG_0001.CR3");
+        PhotoFile finished = photo("final-1", "final-owner", "IMG_0001.jpg");
+        ScanSession session = new ScanSession(
+                List.of(raw), List.of(finished),
+                List.of(new MatchResult(finished, raw, 80, "review", MatchStatus.NEEDS_REVIEW, null)),
+                90, 50
+        );
+        PhotoCullServer server = new PhotoCullServer(8356, Path.of("build", "test-config"), config("", "raw-key", "final-key"));
+        Method sessionJson = PhotoCullServer.class.getDeclaredMethod("sessionJson", ScanSession.class);
+        sessionJson.setAccessible(true);
+        Map<String, Object> sessionPayload = Json.parseObject((String) sessionJson.invoke(server, session));
+
+        assertTrue(sessionPayload.containsKey("session"), "session payload includes summary");
+        assertTrue(!sessionPayload.containsKey("matches"), "session payload excludes all match rows");
+        assertTrue(!sessionPayload.containsKey("tagPlan"), "session payload excludes full tag plan");
     }
 
     private static void separatesExactAndPossibleDuplicates() {

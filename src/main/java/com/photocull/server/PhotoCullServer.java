@@ -16,22 +16,35 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.net.URLDecoder;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
 
 public final class PhotoCullServer {
+    private static final int DEFAULT_PAGE_SIZE = 250;
+    private static final int MAX_PAGE_SIZE = 1_000;
+    private static final long PERSISTENCE_DELAY_MILLIS = 750;
+
     private final int port;
     private final Path configDir;
     private final ImmichConfig immichConfig;
+    private final ImmichWorkflow immichWorkflow;
     private final String accessToken;
     private final SessionStore sessionStore;
     private volatile ScanSession session;
     private volatile ScanJob scanJob;
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor();
+    private final ScheduledExecutorService persistenceExecutor = Executors.newSingleThreadScheduledExecutor();
+    private final Object persistenceLock = new Object();
+    private ScheduledFuture<?> pendingPersistence;
     private HttpServer server;
 
     public PhotoCullServer(int port, Path configDir) {
@@ -46,6 +59,7 @@ public final class PhotoCullServer {
         this.port = port;
         this.configDir = configDir;
         this.immichConfig = immichConfig;
+        this.immichWorkflow = new ImmichWorkflow(immichConfig);
         this.accessToken = accessToken == null ? "" : accessToken.trim();
         this.sessionStore = new SessionStore(configDir);
     }
@@ -57,6 +71,8 @@ public final class PhotoCullServer {
         server.createContext("/", this::handleIndex);
         server.createContext("/api/status", this::handleStatus);
         server.createContext("/api/session", this::handleSession);
+        server.createContext("/api/review", this::handleReview);
+        server.createContext("/api/matches", this::handleMatches);
         server.createContext("/api/match/status", this::handleMatchStatus);
         server.createContext("/api/tag-plan", this::handleTagPlan);
         server.createContext("/api/dry-run", this::handleDryRun);
@@ -65,8 +81,10 @@ public final class PhotoCullServer {
         server.createContext("/api/immich/scan/status", this::handleImmichScanStatus);
         server.createContext("/api/immich/thumbnail", this::handleImmichThumbnail);
         server.createContext("/api/immich/apply-tags", this::handleImmichApplyTags);
-        server.setExecutor(Executors.newFixedThreadPool(Math.max(4, Runtime.getRuntime().availableProcessors())));
+        int requestThreads = Math.max(4, Math.min(16, Runtime.getRuntime().availableProcessors()));
+        server.setExecutor(Executors.newFixedThreadPool(requestThreads));
         server.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(this::flushPersistedState, "pca-state-flush"));
     }
 
     private void handleIndex(HttpExchange exchange) throws IOException {
@@ -104,6 +122,73 @@ public final class PhotoCullServer {
         sendJson(exchange, sessionJson(session));
     }
 
+    private void handleReview(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (session == null) {
+            send(exchange, 409, "application/json", error("No scan session exists yet."));
+            return;
+        }
+
+        Map<String, String> parameters = query(exchange);
+        boolean ascending = "asc".equalsIgnoreCase(parameters.getOrDefault("sort", "desc"));
+        int limit = parsePageSize(parameters.get("limit"));
+        List<MatchResult> matches = session.results();
+        List<Integer> indexes = new ArrayList<>();
+        for (int index = 0; index < matches.size(); index++) {
+            if (matches.get(index).status() == MatchStatus.NEEDS_REVIEW) {
+                indexes.add(index);
+            }
+        }
+        Comparator<Integer> comparator = Comparator.comparingInt(index -> matches.get(index).score());
+        if (!ascending) {
+            comparator = comparator.reversed();
+        }
+        indexes.sort(comparator.thenComparingInt(Integer::intValue));
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < Math.min(limit, indexes.size()); i++) {
+            int index = indexes.get(i);
+            rows.add(matchRow(index, matches.get(index)));
+        }
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("session", sessionSummary(session));
+        values.put("matches", rows);
+        sendJson(exchange, Json.object(values));
+    }
+
+    private void handleMatches(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (session == null) {
+            send(exchange, 409, "application/json", error("No scan session exists yet."));
+            return;
+        }
+
+        Map<String, String> parameters = query(exchange);
+        int offset = Math.max(0, parseInt(parameters.getOrDefault("offset", "0"), 0));
+        int limit = parsePageSize(parameters.get("limit"));
+        List<MatchResult> matches = session.results();
+        int start = Math.min(offset, matches.size());
+        int end = Math.min(start + limit, matches.size());
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("offset", start);
+        values.put("limit", limit);
+        values.put("matchCount", matches.size());
+        values.put("matches", matchRows(matches.subList(start, end), start));
+        sendJson(exchange, Json.object(values));
+    }
+
     private void handleMatchStatus(HttpExchange exchange) throws IOException {
         if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
             send(exchange, 405, "application/json", error("Method not allowed"));
@@ -121,9 +206,12 @@ public final class PhotoCullServer {
             Map<String, String> form = FormData.parse(FormData.body(exchange));
             int index = parseInt(require(form, "index"), -1);
             MatchStatus status = MatchStatus.valueOf(require(form, "status"));
-            session.updateStatus(index, status);
-            persistState();
-            sendJson(exchange, sessionJson(session));
+            if (status != MatchStatus.ACCEPTED && status != MatchStatus.REJECTED) {
+                throw new IllegalArgumentException("Review status must be ACCEPTED or REJECTED.");
+            }
+            MatchResult updated = session.updateStatus(index, status);
+            schedulePersistState();
+            sendJson(exchange, matchStatusJson(index, updated));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
         }
@@ -175,7 +263,7 @@ public final class PhotoCullServer {
         }
 
         try {
-            List<ImmichUser> users = new ImmichWorkflow(immichConfig).users();
+            List<ImmichUser> users = immichWorkflow.users();
             sendJson(exchange, Json.object(Map.of("users", userRows(users))));
         } catch (Exception ex) {
             send(exchange, 500, "application/json", error(ex.getMessage()));
@@ -202,12 +290,12 @@ public final class PhotoCullServer {
             if (autoReject >= autoAccept) {
                 throw new IllegalArgumentException("Auto-reject must be lower than auto-accept.");
             }
-            ScanJob job = new ScanJob(this::persistState);
+            ScanJob job = new ScanJob(this::schedulePersistState);
             scanJob = job;
-            persistState();
+            schedulePersistState();
             scanExecutor.submit(() -> {
                 try {
-                    ScanSession scanSession = new ImmichWorkflow(immichConfig).scan(autoAccept, autoReject, job::progress);
+                    ScanSession scanSession = immichWorkflow.scan(autoAccept, autoReject, job::progress);
                     job.progress("Finding duplicates...");
                     scanSession.duplicateCount();
                     scanSession.duplicateRawCount();
@@ -255,14 +343,14 @@ public final class PhotoCullServer {
             send(exchange, 400, "application/json", error("Missing assetId."));
             return;
         }
-        boolean rawAsset = session.raws().stream().anyMatch(file -> assetId.equals(file.immichAssetId()));
-        boolean finalAsset = session.finals().stream().anyMatch(file -> assetId.equals(file.immichAssetId()));
+        boolean rawAsset = session.isRawAsset(assetId);
+        boolean finalAsset = session.isFinalAsset(assetId);
         if (!rawAsset && !finalAsset) {
             send(exchange, 404, "application/json", error("Asset is not part of the active scan session."));
             return;
         }
         try {
-            byte[] thumbnail = new ImmichWorkflow(immichConfig).thumbnail(assetId, rawAsset);
+            byte[] thumbnail = immichWorkflow.thumbnail(assetId, rawAsset);
             exchange.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
             exchange.getResponseHeaders().set("Content-Type", "image/jpeg");
             exchange.sendResponseHeaders(200, thumbnail.length);
@@ -288,7 +376,7 @@ public final class PhotoCullServer {
         }
 
         try {
-            ImmichTagApplyResult result = new ImmichWorkflow(immichConfig).applyTags(session, configDir);
+            ImmichTagApplyResult result = immichWorkflow.applyTags(session, configDir);
             Map<String, Object> values = new LinkedHashMap<>();
             values.put("keeperAssets", result.keeperAssets());
             values.put("unusedAssets", result.unusedAssets());
@@ -310,7 +398,6 @@ public final class PhotoCullServer {
     private String statusJson() {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("port", port);
-        values.put("configDir", configDir);
         values.put("hasSession", session != null);
         values.put("immich", immichStatus());
         values.put("accessProtected", accessProtected());
@@ -326,13 +413,13 @@ public final class PhotoCullServer {
     private String sessionJson(ScanSession scanSession) {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("session", sessionSummary(scanSession));
-        values.put("matches", matchRows(scanSession.results()));
-        values.put("tagPlan", tagPlanRows(scanSession.tagPlan(immichConfig.keeperTag(), immichConfig.unusedTag())));
-        values.put("finalTagPlan", finalTagPlanRows(scanSession.finalTagPlan(
-                immichConfig.rawFoundTag(),
-                immichConfig.noRawTag(),
-                immichConfig.duplicateTag()
-        )));
+        return Json.object(values);
+    }
+
+    private String matchStatusJson(int index, MatchResult result) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("session", sessionSummary(session));
+        values.put("match", matchRow(index, result));
         return Json.object(values);
     }
 
@@ -358,22 +445,29 @@ public final class PhotoCullServer {
     }
 
     private List<Map<String, Object>> matchRows(List<MatchResult> matches) {
+        return matchRows(matches, 0);
+    }
+
+    private List<Map<String, Object>> matchRows(List<MatchResult> matches, int indexOffset) {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (int i = 0; i < matches.size(); i++) {
-            MatchResult result = matches.get(i);
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("index", i);
-            row.put("status", result.status().name());
-            row.put("statusLabel", result.status().label());
-            row.put("score", result.score());
-            row.put("finishedAssetId", result.finished().immichAssetId());
-            row.put("finishedPath", result.finished().path());
-            row.put("rawAssetId", result.raw() == null ? null : result.raw().immichAssetId());
-            row.put("rawPath", result.rawPathOrNull());
-            row.put("reason", result.reason());
-            rows.add(row);
+            rows.add(matchRow(i + indexOffset, matches.get(i)));
         }
         return rows;
+    }
+
+    private Map<String, Object> matchRow(int index, MatchResult result) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("index", index);
+        row.put("status", result.status().name());
+        row.put("statusLabel", result.status().label());
+        row.put("score", result.score());
+        row.put("finishedAssetId", result.finished().immichAssetId());
+        row.put("finishedPath", result.finished().path());
+        row.put("rawAssetId", result.raw() == null ? null : result.raw().immichAssetId());
+        row.put("rawPath", result.rawPathOrNull());
+        row.put("reason", result.reason());
+        return row;
     }
 
     private List<Map<String, Object>> userRows(List<ImmichUser> users) {
@@ -392,19 +486,11 @@ public final class PhotoCullServer {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("configured", immichConfig.isConfigured());
         values.put("missing", immichConfig.missingFields());
-        values.put("url", immichConfig.url());
         values.put("sharedApiKeyConfigured", immichConfig.sharedApiKeyConfigured());
         values.put("rawApiKeyConfigured", immichConfig.rawApiKeyConfigured());
         values.put("finalApiKeyConfigured", immichConfig.finalApiKeyConfigured());
         values.put("rawApiKeySource", immichConfig.rawApiKeySource());
         values.put("finalApiKeySource", immichConfig.finalApiKeySource());
-        values.put("rawUserId", immichConfig.rawUserId());
-        values.put("finalUserId", immichConfig.finalUserId());
-        values.put("keeperTag", immichConfig.keeperTag());
-        values.put("unusedTag", immichConfig.unusedTag());
-        values.put("rawFoundTag", immichConfig.rawFoundTag());
-        values.put("noRawTag", immichConfig.noRawTag());
-        values.put("duplicateTag", immichConfig.duplicateTag());
         return values;
     }
 
@@ -478,7 +564,7 @@ public final class PhotoCullServer {
 
     private void restorePersistedState() {
         try {
-            SessionStore.StoredState stored = sessionStore.load(this::persistState);
+            SessionStore.StoredState stored = sessionStore.load(this::schedulePersistState);
             session = stored.session();
             scanJob = stored.job();
             if (scanJob != null) {
@@ -489,7 +575,31 @@ public final class PhotoCullServer {
         }
     }
 
-    private void persistState() {
+    private int parsePageSize(String value) {
+        return Math.max(1, Math.min(MAX_PAGE_SIZE, parseInt(value, DEFAULT_PAGE_SIZE)));
+    }
+
+    private void schedulePersistState() {
+        synchronized (persistenceLock) {
+            if (pendingPersistence != null) {
+                pendingPersistence.cancel(false);
+            }
+            pendingPersistence = persistenceExecutor.schedule(this::persistStateNow,
+                    PERSISTENCE_DELAY_MILLIS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void flushPersistedState() {
+        synchronized (persistenceLock) {
+            if (pendingPersistence != null) {
+                pendingPersistence.cancel(false);
+            }
+        }
+        persistStateNow();
+        persistenceExecutor.shutdown();
+    }
+
+    private void persistStateNow() {
         try {
             sessionStore.save(session, scanJob);
         } catch (IOException ex) {
@@ -521,7 +631,8 @@ public final class PhotoCullServer {
             return true;
         }
         String provided = exchange.getRequestHeaders().getFirst("X-PCA-Token");
-        if (accessToken.equals(provided)) {
+        if (provided != null && MessageDigest.isEqual(
+                accessToken.getBytes(StandardCharsets.UTF_8), provided.getBytes(StandardCharsets.UTF_8))) {
             return true;
         }
         send(exchange, 401, "application/json", error("Access token required."));
@@ -539,6 +650,14 @@ public final class PhotoCullServer {
     private void send(HttpExchange exchange, int status, String contentType, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", contentType);
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        exchange.getResponseHeaders().set("X-Frame-Options", "DENY");
+        exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
+        if (contentType.startsWith("text/html")) {
+            exchange.getResponseHeaders().set("Content-Security-Policy",
+                    "default-src 'self'; connect-src 'self'; img-src 'self' blob:; style-src 'self' 'unsafe-inline'; "
+                            + "script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
+        }
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(bytes);
