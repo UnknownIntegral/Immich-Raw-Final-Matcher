@@ -69,9 +69,11 @@ public final class MatchEngine {
                 ));
             } else {
                 ScoredMatch second = scoredCandidates.size() < 2 ? null : scoredCandidates.get(1);
-                boolean ambiguousRawMatch = best.score() > autoRejectThreshold && second != null
-                        && second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, autoAcceptThreshold - 10)
-                        && best.score() - second.score() <= AMBIGUOUS_RAW_MATCH_MARGIN;
+                boolean ambiguousRawMatch = best.score() > autoRejectThreshold && second != null && (
+                        burstCandidates(finished, best.raw(), second.raw())
+                                || second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, autoAcceptThreshold - 10)
+                                && best.score() - second.score() <= AMBIGUOUS_RAW_MATCH_MARGIN
+                );
                 if (ambiguousRawMatch) {
                     results.add(new MatchResult(
                             finished,
@@ -152,6 +154,16 @@ public final class MatchEngine {
         return low;
     }
 
+    private boolean burstCandidates(PhotoFile finished, PhotoFile firstRaw, PhotoFile secondRaw) {
+        return withinBurstWindow(finished.captureTime(), firstRaw.captureTime())
+                && withinBurstWindow(finished.captureTime(), secondRaw.captureTime());
+    }
+
+    private boolean withinBurstWindow(Instant first, Instant second) {
+        return first != null && second != null
+                && Math.abs(Duration.between(first, second).toSeconds()) <= 2;
+    }
+
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
         List<String> reasons = new ArrayList<>();
         int nameScore = nameScore(finished, raw, reasons);
@@ -206,25 +218,35 @@ public final class MatchEngine {
     private int timeScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
         if (finished.captureTime() != null && raw.captureTime() != null) {
             long seconds = Math.abs(Duration.between(finished.captureTime(), raw.captureTime()).toSeconds());
+            // Cameras frequently create several burst frames in the same second.  Capture time is
+            // useful to narrow the search, but on its own it must not be strong enough to auto-accept.
+            if (seconds == 0) {
+                reasons.add("same capture timestamp (burst-safe, requires another signal)");
+                return 60;
+            }
+            if (seconds == 1) {
+                reasons.add("capture times are 1 second apart");
+                return 52;
+            }
             if (seconds <= 2) {
-                reasons.add("capture times match within 2 seconds");
-                return 88;
+                reasons.add("capture times are 2 seconds apart");
+                return 44;
             }
             if (seconds <= 10) {
                 reasons.add("capture times match within 10 seconds");
-                return 82;
+                return 38;
             }
             if (seconds <= 60) {
                 reasons.add("capture times match within 1 minute");
-                return 72;
+                return 30;
             }
             if (seconds <= 300) {
                 reasons.add("capture times match within 5 minutes");
-                return 58;
+                return 22;
             }
             if (seconds <= 3600) {
                 reasons.add("capture times match within 1 hour");
-                return 32;
+                return 12;
             }
             return 0;
         }

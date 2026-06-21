@@ -36,6 +36,7 @@ public final class ScanSession {
     private long unusedCount;
     private long rawFoundCount;
     private long noRawCount;
+    private Integer lastReviewDecisionIndex;
 
     public ScanSession(List<PhotoFile> raws, List<PhotoFile> finals, List<MatchResult> results, int threshold) {
         this(raws, finals, results, threshold, 0);
@@ -57,9 +58,17 @@ public final class ScanSession {
             List<PhotoFile> finals,
             List<MatchResult> results,
             int autoAcceptThreshold,
-            int autoRejectThreshold
+            int autoRejectThreshold,
+            int lastReviewDecisionIndex
     ) {
-        return new ScanSession(createdAt, raws, finals, results, autoAcceptThreshold, autoRejectThreshold);
+        ScanSession session = new ScanSession(createdAt, raws, finals, results, autoAcceptThreshold, autoRejectThreshold);
+        if (lastReviewDecisionIndex >= 0 && lastReviewDecisionIndex < session.results.size()) {
+            MatchStatus status = session.results.get(lastReviewDecisionIndex).status();
+            if (status == MatchStatus.ACCEPTED || status == MatchStatus.REJECTED) {
+                session.lastReviewDecisionIndex = lastReviewDecisionIndex;
+            }
+        }
+        return session;
     }
 
     private ScanSession(
@@ -123,6 +132,9 @@ public final class ScanSession {
             throw new IllegalArgumentException("Unknown match index: " + index);
         }
         MatchResult current = results.get(index);
+        if (current.status() != MatchStatus.NEEDS_REVIEW) {
+            throw new IllegalArgumentException("Only a match awaiting review can be accepted or rejected.");
+        }
         if (current.rawPathOrNull() == null && status != MatchStatus.REJECTED) {
             throw new IllegalArgumentException("Cannot accept a row with no RAW match.");
         }
@@ -139,7 +151,43 @@ public final class ScanSession {
         if (rawPath != null) {
             updateUnusedCount(rawPath, wasUnused);
         }
+        if (status == MatchStatus.ACCEPTED || status == MatchStatus.REJECTED) {
+            lastReviewDecisionIndex = index;
+        }
         return updated;
+    }
+
+    /** Restores the most recently reviewed match to the queue. */
+    public synchronized MatchResult undoLastReviewDecision() {
+        if (lastReviewDecisionIndex == null) {
+            throw new IllegalStateException("There is no review decision to undo.");
+        }
+        int index = lastReviewDecisionIndex;
+        MatchResult current = results.get(index);
+        if (current.status() != MatchStatus.ACCEPTED && current.status() != MatchStatus.REJECTED) {
+            lastReviewDecisionIndex = null;
+            throw new IllegalStateException("The last review decision can no longer be undone.");
+        }
+
+        Path rawPath = current.rawPathOrNull();
+        boolean wasUnused = rawPath != null && isUnused(rawPath);
+        removeMetrics(current);
+        MatchResult restored = current.withStatus(MatchStatus.NEEDS_REVIEW);
+        results.set(index, restored);
+        addMetrics(restored);
+        if (rawPath != null) {
+            updateUnusedCount(rawPath, wasUnused);
+        }
+        lastReviewDecisionIndex = null;
+        return restored;
+    }
+
+    public synchronized boolean canUndoLastReviewDecision() {
+        return lastReviewDecisionIndex != null;
+    }
+
+    public synchronized Integer lastReviewDecisionIndex() {
+        return lastReviewDecisionIndex;
     }
 
     public synchronized List<TagPlanItem> tagPlan() {

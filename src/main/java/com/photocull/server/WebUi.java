@@ -24,8 +24,8 @@ public final class WebUi {
                     .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; } .metric { padding:11px; border:1px solid var(--line); border-radius:6px; background:#fbfcf9; } .metric div:first-child { color:var(--muted); font-size:12px; } .metric div:last-child { font-size:21px; font-weight:650; margin-top:3px; }
                     .note,.muted { color:var(--muted); } .note { font-size:12px; margin-top:10px; } .status { min-height:20px; color:var(--muted); }
                     .table-wrap { overflow:auto; max-height:58vh; border:1px solid var(--line); border-radius:6px; } table { width:100%; border-collapse:collapse; font-size:13px; } th,td { padding:8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; } th { position:sticky; top:0; background:#f0f2ef; z-index:1; } .path { max-width:300px; overflow-wrap:anywhere; } .score-high { color:#17603d; font-weight:650; } .score-mid { color:var(--warn); font-weight:650; } .score-low { color:var(--bad); font-weight:650; }
-                    .review-wrap { border:1px solid var(--line); border-radius:6px; padding:0 14px; } .review-header { display:flex; justify-content:space-between; gap:12px; align-items:center; padding-top:14px; } .review-grid { display:grid; grid-template-columns:1fr 1fr auto; gap:14px; padding:14px 0; align-items:start; } .asset { display:grid; grid-template-columns:112px 1fr; gap:10px; min-width:0; } .thumb { width:112px; height:84px; object-fit:cover; border-radius:5px; background:#e7e9e7; } .asset-name { overflow-wrap:anywhere; font-weight:600; } .asset-id { color:var(--muted); font-size:12px; overflow-wrap:anywhere; } .review-actions { display:flex; flex-direction:column; gap:8px; min-width:118px; }
-                    @media (max-width:850px) { .grid { grid-template-columns:1fr; } .review-grid { grid-template-columns:1fr; } .review-actions { flex-direction:row; } .review-header { align-items:flex-start; flex-direction:column; } }
+                    .review-wrap { border:1px solid var(--line); border-radius:6px; padding:0 14px; } .review-header { display:flex; justify-content:space-between; gap:12px; align-items:center; padding-top:14px; } .review-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-width:1280px; margin:0 auto; padding:14px 0 18px; align-items:start; } .review-asset { min-width:0; } .review-preview { display:flex; align-items:center; justify-content:center; height:clamp(280px,52vh,640px); padding:6px; border:1px solid var(--line); border-radius:7px; background:#f4f6f4; } .review-thumb { display:block; width:100%; height:100%; object-fit:contain; border-radius:4px; background:#e7e9e7; } .review-missing { width:100%; height:100%; display:grid; place-items:center; color:var(--muted); background:#e7e9e7; border-radius:4px; } .review-caption { padding:9px 2px 0; } .review-caption-label { color:var(--muted); font-size:12px; font-weight:650; text-transform:uppercase; letter-spacing:.04em; } .asset { display:grid; grid-template-columns:112px 1fr; gap:10px; min-width:0; } .thumb { width:112px; height:84px; object-fit:cover; border-radius:5px; background:#e7e9e7; } .asset-name { overflow-wrap:anywhere; font-weight:600; } .asset-id { color:var(--muted); font-size:12px; overflow-wrap:anywhere; } .review-match-details { grid-column:1 / -1; max-width:960px; margin:2px auto 0; text-align:center; } .review-actions { grid-column:1 / -1; display:flex; justify-content:center; gap:8px; }
+                    @media (max-width:850px) { .grid { grid-template-columns:1fr; } .review-header { align-items:flex-start; flex-direction:column; } } @media (max-width:650px) { .review-grid { grid-template-columns:1fr; } .review-preview { height:clamp(250px,55vh,520px); } }
                   </style>
                 </head>
                 <body>
@@ -39,7 +39,7 @@ public final class WebUi {
                         <button id="scanButton" type="submit">Scan Immich</button>
                       </form>
                       <div class="progress-shell" id="progressShell" hidden><div id="progress" class="progress indeterminate"><div></div></div><span id="progressText" class="status">Starting...</span></div>
-                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Write dry-run manifest</button><button id="applyTagsButton" disabled>Apply Immich tags</button><span id="message" class="status"></span></div>
+                      <div class="actions" style="margin-top:14px"><button id="undoButton" class="secondary" disabled>Undo last review decision</button><button id="dryRunButton" class="secondary" disabled>Write dry-run manifest</button><button id="applyTagsButton" disabled>Apply Immich tags</button><span id="message" class="status"></span></div>
                     </section>
                     <section>
                       <h2>Scan summary</h2>
@@ -77,6 +77,7 @@ public final class WebUi {
                     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
                     const scoreClass = score => score >= 90 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low';
                     $('scanForm').addEventListener('submit', startScan);
+                    $('undoButton').addEventListener('click', undoLastReviewDecision);
                     $('dryRunButton').addEventListener('click', writeDryRun);
                     $('applyTagsButton').addEventListener('click', applyTags);
                     $('matchesPrevious').addEventListener('click', () => loadMatches(Math.max(0, state.matchesOffset - MATCHES_PAGE_SIZE)));
@@ -84,7 +85,9 @@ public final class WebUi {
                     ['review','matches','tagPlan','finalTagPlan'].forEach(tab => $(tab + 'Tab').addEventListener('click', () => showTab(tab)));
                     $('reviewSort').addEventListener('change', () => refreshReview());
                     document.addEventListener('keydown', event => {
-                      if (event.ctrlKey || event.metaKey || event.altKey || activeTab !== 'review' || busy) return;
+                      if (activeTab !== 'review' || busy) return;
+                      if (event.key.toLowerCase() === 'z' && (event.ctrlKey || event.metaKey) && state.session?.canUndoLastReviewDecision) { event.preventDefault(); undoLastReviewDecision(); return; }
+                      if (event.ctrlKey || event.metaKey || event.altKey) return;
                       if (['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName)) return;
                       const row = state.reviewRows[0];
                       if (!row) return;
@@ -155,6 +158,18 @@ public final class WebUi {
                         if(state.reviewRows.length < REVIEW_BUFFER / 2) void refreshReview(true);
                       } catch(error){message(error.message);} finally{setBusy(false);}
                     }
+                    async function undoLastReviewDecision() {
+                      if (busy || !state.session?.canUndoLastReviewDecision) return;
+                      setBusy(true);
+                      try {
+                        const response=await apiFetch('/api/match/undo',{method:'POST'}); const data=await response.json();
+                        if(!response.ok) throw new Error(data.error||'Undo failed');
+                        state.session=data.session;
+                        const matchIndex=state.matches.findIndex(candidate => candidate.index === data.match.index);
+                        if(matchIndex >= 0) state.matches[matchIndex]=data.match;
+                        await refreshReview(true); message('Last review decision undone.');
+                      } catch(error){message(error.message);} finally{setBusy(false);}
+                    }
                     async function loadMatches(offset = 0) {
                       if (!state.session || offset < 0 || (state.matchCount && offset >= state.matchCount)) return;
                       try {
@@ -176,13 +191,14 @@ public final class WebUi {
                       ['rawCount','finalCount','rawFoundCount','reviewCount','unusedCount','duplicateCount','duplicateRawCount'].forEach(id => $(id).textContent=s[id]||0);
                       $('possibleFinalCount').textContent=s.possibleDuplicateFinalCount||0; $('possibleRawCount').textContent=s.possibleDuplicateRawCount||0;
                       $('autoAccept').value=s.autoAcceptThreshold||$('autoAccept').value; $('autoReject').value=s.autoRejectThreshold??$('autoReject').value;
+                      $('undoButton').disabled=!s.canUndoLastReviewDecision||busy;
                       $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!state.session||busy;
                     }
                     function renderActiveTab() { if(activeTab==='review') renderReview(); if(activeTab==='matches') renderMatches(); if(activeTab==='tagPlan') renderTagPlan(); if(activeTab==='finalTagPlan') renderFinalTagPlan(); }
                     function renderReview() {
                       const view=$('reviewView'); const row=state.reviewRows[0];
                       if(!row) { view.innerHTML=state.session?.reviewCount ? '<p class="muted">Loading review queue...</p>' : '<p class="muted">Nothing needs review. The middle score band will appear here after a scan.</p>'; return; }
-                      view.innerHTML=`<div class="review-header"><strong>${state.session?.reviewCount||0} reviews remaining</strong><span class="muted">Keyboard: A accept, R reject</span></div><div class="review-grid"><div class="asset">${thumbHtml(row.finishedAssetId)}<div><div class="asset-name">${escapeHtml(row.finishedPath)}</div><div class="asset-id">Final asset: ${escapeHtml(row.finishedAssetId)}</div></div></div><div class="asset">${row.rawAssetId?thumbHtml(row.rawAssetId):'<div class="thumb"></div>'}<div><div class="asset-name">${escapeHtml(row.rawPath||'No RAW candidate')}</div><div class="asset-id">${row.rawAssetId?'RAW asset: '+escapeHtml(row.rawAssetId):''}</div><div class="${scoreClass(row.score)}">${row.score}% match</div><div class="muted">${escapeHtml(row.reason)}</div></div></div><div class="review-actions"><button ${row.rawAssetId&&!busy?'':'disabled'} data-action="accept">Accept match</button><button class="secondary" ${busy?'disabled':''} data-action="reject">No matching RAW</button></div></div>`;
+                      view.innerHTML=`<div class="review-header"><strong>${state.session?.reviewCount||0} reviews remaining</strong><span class="muted">Keyboard: A accept, R reject</span></div><div class="review-grid"><div class="review-asset"><div class="review-preview">${reviewThumbHtml(row.finishedAssetId, 'Final image preview')}</div><div class="review-caption"><div class="review-caption-label">Final image</div><div class="asset-name">${escapeHtml(row.finishedPath)}</div><div class="asset-id">Final asset: ${escapeHtml(row.finishedAssetId)}</div></div></div><div class="review-asset"><div class="review-preview">${row.rawAssetId?reviewThumbHtml(row.rawAssetId, 'RAW image preview'):'<div class="review-missing">No RAW candidate</div>'}</div><div class="review-caption"><div class="review-caption-label">RAW candidate</div><div class="asset-name">${escapeHtml(row.rawPath||'No RAW candidate')}</div><div class="asset-id">${row.rawAssetId?'RAW asset: '+escapeHtml(row.rawAssetId):''}</div></div></div><div class="review-match-details"><div class="${scoreClass(row.score)}">${row.score}% match</div><div class="muted">${escapeHtml(row.reason)}</div></div><div class="review-actions"><button ${row.rawAssetId&&!busy?'':'disabled'} data-action="accept">Accept match</button><button class="secondary" ${busy?'disabled':''} data-action="reject">No matching RAW</button></div></div>`;
                       view.querySelector('[data-action="accept"]')?.addEventListener('click',()=>updateStatus(row,'ACCEPTED'));
                       view.querySelector('[data-action="reject"]')?.addEventListener('click',()=>updateStatus(row,'REJECTED'));
                       observeThumbnails(view,view);
@@ -197,6 +213,7 @@ public final class WebUi {
                     function renderTagPlan(){const body=$('tagPlanBody');if(state.tagPlan===null){body.innerHTML='<tr><td colspan="5" class="muted">Loading tag plan...</td></tr>';return;}body.innerHTML='';for(const row of state.tagPlan){const tr=document.createElement('tr');tr.innerHTML=`<td><strong>${escapeHtml(row.tag)}</strong></td><td class="path">${escapeHtml(row.rawPath)}</td><td class="path">${escapeHtml(row.matchedFinalPath||'')}</td><td>${row.score||0}%</td><td>${escapeHtml(row.basis)}</td>`;body.appendChild(tr);}}
                     function renderFinalTagPlan(){const body=$('finalTagPlanBody');if(state.finalTagPlan===null){body.innerHTML='<tr><td colspan="5" class="muted">Loading tag plan...</td></tr>';return;}body.innerHTML='';for(const row of state.finalTagPlan){const tr=document.createElement('tr');tr.innerHTML=`<td><strong>${escapeHtml(row.tag)}</strong></td><td class="path">${escapeHtml(row.finalPath)}</td><td class="path">${escapeHtml(row.matchedRawPath||'')}</td><td>${row.score||0}%</td><td>${escapeHtml(row.basis)}</td>`;body.appendChild(tr);}}
                     function thumbHtml(assetId){return `<img class="thumb" data-asset-id="${escapeHtml(assetId||'')}" alt="Asset thumbnail">`;}
+                    function reviewThumbHtml(assetId,alt){return `<img class="review-thumb" data-asset-id="${escapeHtml(assetId||'')}" alt="${escapeHtml(alt)}">`;}
                     function observeThumbnails(scrollRoot,content){thumbnailObservers.get(scrollRoot)?.disconnect();const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(!entry.isIntersecting)continue;observer.unobserve(entry.target);loadThumbnail(entry.target);}}, {root:scrollRoot,threshold:0});thumbnailObservers.set(scrollRoot,observer);for(const image of content.querySelectorAll('img[data-asset-id]')){const id=image.dataset.assetId;if(thumbs.has(id)){image.src=thumbs.get(id);continue;}observer.observe(image);}}
                     async function loadThumbnail(image){const id=image.dataset.assetId;if(!id)return;let request=thumbnailRequests.get(id);if(!request){request=apiFetch('/api/immich/thumbnail?assetId='+encodeURIComponent(id)).then(response=>{if(!response.ok)throw new Error();return response.blob();}).then(blob=>{const url=URL.createObjectURL(blob);thumbs.set(id,url);return url;}).finally(()=>thumbnailRequests.delete(id));thumbnailRequests.set(id,request);}try{const url=await request;document.querySelectorAll(`img[data-asset-id="${CSS.escape(id)}"]`).forEach(img=>img.src=url);}catch{image.alt='Preview unavailable';}}
                     function showTab(tab){activeTab=tab;['review','matches','tagPlan','finalTagPlan'].forEach(name=>{$(name+'Tab').classList.toggle('active',name===tab);$(name+'View').style.display=name===tab?'':'none';});renderActiveTab();if(tab==='review'&&!state.reviewRows.length)void refreshReview();if(tab==='matches'&&!state.matches.length)void loadMatches();if((tab==='tagPlan'||tab==='finalTagPlan')&&state.tagPlan===null)void loadTagPlan();}

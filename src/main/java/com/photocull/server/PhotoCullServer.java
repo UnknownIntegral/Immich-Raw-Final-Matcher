@@ -74,6 +74,7 @@ public final class PhotoCullServer {
         server.createContext("/api/review", this::handleReview);
         server.createContext("/api/matches", this::handleMatches);
         server.createContext("/api/match/status", this::handleMatchStatus);
+        server.createContext("/api/match/undo", this::handleMatchUndo);
         server.createContext("/api/tag-plan", this::handleTagPlan);
         server.createContext("/api/dry-run", this::handleDryRun);
         server.createContext("/api/immich/users", this::handleImmichUsers);
@@ -311,6 +312,29 @@ public final class PhotoCullServer {
         }
     }
 
+    private void handleMatchUndo(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (session == null) {
+            send(exchange, 409, "application/json", error("No scan session exists yet."));
+            return;
+        }
+
+        try {
+            MatchResult restored = session.undoLastReviewDecision();
+            int index = session.results().indexOf(restored);
+            schedulePersistState();
+            sendJson(exchange, matchStatusJson(index, restored));
+        } catch (Exception ex) {
+            send(exchange, 400, "application/json", error(ex.getMessage()));
+        }
+    }
+
     private void handleImmichScanStatus(HttpExchange exchange) throws IOException {
         if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
             send(exchange, 405, "application/json", error("Method not allowed"));
@@ -435,6 +459,7 @@ public final class PhotoCullServer {
         values.put("unusedCount", scanSession.unusedCount());
         values.put("rawFoundCount", scanSession.rawFoundCount());
         values.put("noRawCount", scanSession.noRawCount());
+        values.put("canUndoLastReviewDecision", scanSession.canUndoLastReviewDecision());
         values.put("duplicateCount", scanSession.duplicateCount());
         values.put("possibleDuplicateFinalCount", scanSession.possibleDuplicateFinalCount());
         values.put("duplicateRawCount", scanSession.duplicateRawCount());

@@ -37,7 +37,9 @@ public final class Tests {
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
+        doesNotAutoAcceptBurstByTimestamp();
         updatesCachedSessionMetricsDuringReview();
+        undoesLastReviewDecision();
         keepsSessionAndReviewUpdatesSmall();
         separatesExactAndPossibleDuplicates();
         flagsFinalsWithMultipleStrongRawCandidates();
@@ -275,6 +277,37 @@ public final class Tests {
         assertEquals(2L, session.noRawCount(), "no RAW count after rejection");
         assertEquals(1L, session.tagPlan().stream().filter(item -> item.tag().equals("not used")).count(), "tag plan unused count");
         assertEquals(1L, session.finalTagPlan().stream().filter(item -> item.tag().equals("RAW Found")).count(), "tag plan RAW found count");
+    }
+
+    private static void doesNotAutoAcceptBurstByTimestamp() {
+        Instant captureTime = Instant.parse("2024-01-01T10:00:00Z");
+        PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "BURST_A.CR3", "/raw/BURST_A.CR3", 1,
+                captureTime, captureTime, "", "");
+        PhotoFile finished = PhotoFile.fromImmichAsset("final-1", "final-owner", "EXPORT_B.jpg", "/final/EXPORT_B.jpg", 1,
+                captureTime, captureTime, "", "");
+
+        MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
+        assertEquals(60, match.score(), "same-timestamp burst score");
+        assertEquals(MatchStatus.NEEDS_REVIEW, match.status(), "same timestamp requires review");
+    }
+
+    private static void undoesLastReviewDecision() {
+        PhotoFile raw = photo("raw-1", "raw-owner", "IMG_0001.CR3");
+        PhotoFile finished = photo("final-1", "final-owner", "IMG_0001.jpg");
+        ScanSession session = new ScanSession(
+                List.of(raw), List.of(finished),
+                List.of(new MatchResult(finished, raw, 80, "review", MatchStatus.NEEDS_REVIEW, null)),
+                90, 50
+        );
+
+        session.updateStatus(0, MatchStatus.ACCEPTED);
+        assertTrue(session.canUndoLastReviewDecision(), "acceptance can be undone");
+        MatchResult restored = session.undoLastReviewDecision();
+        assertEquals(MatchStatus.NEEDS_REVIEW, restored.status(), "undo returns item to review");
+        assertEquals(1L, session.reviewCount(), "undo restores review count");
+        assertEquals(0L, session.rawFoundCount(), "undo removes accepted match");
+        assertEquals(0L, session.unusedCount(), "undo keeps a pending RAW out of the unused plan");
+        assertEquals(false, session.canUndoLastReviewDecision(), "undo is one step");
     }
 
     private static void keepsSessionAndReviewUpdatesSmall() throws Exception {

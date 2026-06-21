@@ -54,6 +54,7 @@ final class SessionStore {
         values.put("createdAt", session.createdAt());
         values.put("autoAcceptThreshold", session.threshold());
         values.put("autoRejectThreshold", session.autoRejectThreshold());
+        values.put("lastReviewDecisionIndex", session.lastReviewDecisionIndex());
         values.put("raws", session.raws().stream().map(this::photoJson).toList());
         values.put("finals", session.finals().stream().map(this::photoJson).toList());
         Map<Path, Integer> rawIndexes = indexes(session.raws());
@@ -94,7 +95,8 @@ final class SessionStore {
                     string(row.get("reason"), ""), status, null));
         }
         return ScanSession.restored(instant(values.get("createdAt")), raws, finals, results,
-                number(values.get("autoAcceptThreshold"), 90), number(values.get("autoRejectThreshold"), 50));
+                number(values.get("autoAcceptThreshold"), 90), number(values.get("autoRejectThreshold"), 50),
+                number(values.get("lastReviewDecisionIndex"), -1));
     }
 
     private Map<Path, Integer> indexes(List<PhotoFile> photos) {
