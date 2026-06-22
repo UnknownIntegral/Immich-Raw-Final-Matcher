@@ -4,7 +4,9 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -62,7 +64,52 @@ public final class DryRunManifestWriter {
         return target;
     }
 
+    /** Writes the immutable plan that will be applied, rather than recalculating a live session. */
+    public Path writeCsv(ImmutableTagPlan plan, Path target) throws IOException {
+        Files.createDirectories(target.getParent());
+        Path temporary = target.resolveSibling(target.getFileName() + ".tmp");
+        try (BufferedWriter writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+            writer.write("plan_id,plan_fingerprint,account,decision,tag,asset_id,path,matched_asset_id,matched_path,score,basis");
+            writer.newLine();
+            for (ImmutableTagPlan.PlanItem item : plan.items()) {
+                writer.write(csv(plan.id()));
+                writer.write(',');
+                writer.write(csv(plan.fingerprint()));
+                writer.write(',');
+                writer.write(csv(item.account().toLowerCase()));
+                writer.write(',');
+                writer.write(csv(item.decision()));
+                writer.write(',');
+                writer.write(csv(item.tag()));
+                writer.write(',');
+                writer.write(csv(item.assetId()));
+                writer.write(',');
+                writer.write(csv(item.path()));
+                writer.write(',');
+                writer.write(csv(item.matchedAssetId() == null ? "" : item.matchedAssetId()));
+                writer.write(',');
+                writer.write(csv(item.matchedPath() == null ? "" : item.matchedPath()));
+                writer.write(',');
+                writer.write(Integer.toString(item.score()));
+                writer.write(',');
+                writer.write(csv(item.basis()));
+                writer.newLine();
+            }
+        }
+        try {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+        return target;
+    }
+
     private String csv(String value) {
-        return "\"" + value.replace("\"", "\"\"") + "\"";
+        String safe = value == null ? "" : value;
+        // CSV is commonly opened in spreadsheet software. Neutralise formula-looking user metadata.
+        if (!safe.isBlank() && "=+-@".indexOf(safe.charAt(0)) >= 0) {
+            safe = "'" + safe;
+        }
+        return "\"" + safe.replace("\"", "\"\"") + "\"";
     }
 }

@@ -16,7 +16,16 @@ public interface ImmichApi {
 
     ImmichTag ensureTag(String name) throws IOException, InterruptedException;
 
+    /**
+     * Returns tags visible to this API key. This is used to make reconciliation
+     * non-destructive: a missing obsolete tag is treated as already reconciled
+     * instead of creating a tag solely in order to remove it.
+     */
+    List<ImmichTag> tags() throws IOException, InterruptedException;
+
     int tagAssets(String tagId, List<String> assetIds) throws IOException, InterruptedException;
+
+    int untagAssets(String tagId, List<String> assetIds) throws IOException, InterruptedException;
 
     byte[] thumbnail(String assetId) throws IOException, InterruptedException;
 }

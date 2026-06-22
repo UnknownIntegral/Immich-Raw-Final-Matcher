@@ -1,6 +1,7 @@
 package com.photocull;
 
 import com.photocull.matcher.MatchEngine;
+import com.photocull.matcher.MatchCandidate;
 import com.photocull.matcher.MatchResult;
 import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.PhotoFile;
@@ -11,6 +12,9 @@ import com.photocull.immich.ImmichTag;
 import com.photocull.immich.ImmichUser;
 import com.photocull.immich.ImmichWorkflow;
 import com.photocull.server.FinalTagPlanItem;
+import com.photocull.server.ImmutableTagPlan;
+import com.photocull.server.HistoryStore;
+import com.photocull.server.PlanApplyOperation;
 import com.photocull.server.Json;
 import com.photocull.server.PhotoCullServer;
 import com.photocull.server.ScanSession;
@@ -24,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 public final class Tests {
@@ -39,13 +44,17 @@ public final class Tests {
         autoRejectsLowScoresOutsideReviewQueue();
         autoAcceptsUniqueExactTimestamp();
         updatesCachedSessionMetricsDuringReview();
+        acceptsReviewerSelectedAlternativeCandidate();
+        recordsDurableDecisionHistory();
         undoesLastReviewDecision();
         keepsSessionAndReviewUpdatesSmall();
         separatesExactAndPossibleDuplicates();
         flagsFinalsWithMultipleStrongRawCandidates();
-        fallsBackToSharedImmichApiKey();
+        requiresAccountSpecificImmichApiKeys();
         scansRawAndFinalAssetsWithSeparateClients();
         appliesTagsWithSideSpecificClients();
+        freezesExactPlanBeforeApplying();
+        reconcilesStaleDecisionTags();
         omitsApiKeysFromStatusJson();
     }
 
@@ -282,6 +291,58 @@ public final class Tests {
         assertEquals(1L, session.finalTagPlan().stream().filter(item -> item.tag().equals("RAW Found")).count(), "tag plan RAW found count");
     }
 
+    private static void acceptsReviewerSelectedAlternativeCandidate() {
+        PhotoFile firstRaw = photo("raw-1", "raw-owner", "IMG_0001.CR3");
+        PhotoFile secondRaw = photo("raw-2", "raw-owner", "ALT_0001.CR3");
+        PhotoFile finished = photo("final-1", "final-owner", "IMG_0001.jpg");
+        MatchResult review = new MatchResult(
+                finished,
+                firstRaw,
+                82,
+                "first candidate",
+                MatchStatus.NEEDS_REVIEW,
+                null,
+                List.of(
+                        new MatchCandidate(firstRaw, 82, "first candidate"),
+                        new MatchCandidate(secondRaw, 79, "second candidate")
+                )
+        );
+        ScanSession session = new ScanSession(List.of(firstRaw, secondRaw), List.of(finished), List.of(review), 90, 50);
+
+        MatchResult accepted = session.updateStatus(0, MatchStatus.ACCEPTED, "raw-2");
+
+        assertEquals("raw-2", accepted.raw().immichAssetId(), "selected alternate RAW is accepted");
+        assertEquals(79, accepted.score(), "selected alternate score is preserved");
+        assertEquals(1L, session.tagPlan().stream()
+                .filter(item -> item.tag().equals("Keeper") && item.rawAssetId().equals("raw-2")).count(),
+                "alternate RAW becomes Keeper");
+        assertEquals(1L, session.tagPlan().stream()
+                .filter(item -> item.tag().equals("not used") && item.rawAssetId().equals("raw-1")).count(),
+                "original suggestion becomes unused");
+    }
+
+    private static void recordsDurableDecisionHistory() throws IOException {
+        String suffix = UUID.randomUUID().toString();
+        PhotoFile firstRaw = photo("history-raw-first-" + suffix, "raw-owner", "IMG_0001.CR3");
+        PhotoFile secondRaw = photo("history-raw-second-" + suffix, "raw-owner", "ALT_0001.CR3");
+        PhotoFile finished = photo("history-final-" + suffix, "final-owner", "IMG_0001.jpg");
+        MatchResult review = new MatchResult(
+                finished, firstRaw, 82, "first candidate", MatchStatus.NEEDS_REVIEW, null,
+                List.of(new MatchCandidate(firstRaw, 82, "first candidate"), new MatchCandidate(secondRaw, 79, "second candidate"))
+        );
+        ScanSession session = new ScanSession(List.of(firstRaw, secondRaw), List.of(finished), List.of(review), 90, 50);
+        MatchResult accepted = session.updateStatus(0, MatchStatus.ACCEPTED, secondRaw.immichAssetId());
+        HistoryStore store = new HistoryStore(Path.of("build", "test-history", suffix));
+
+        store.recordReviewDecision(session, review, accepted);
+        List<Map<String, Object>> events = store.list(10, secondRaw.immichAssetId());
+
+        assertEquals(1, events.size(), "stored decision history event count");
+        assertEquals("REVIEW_DECISION", events.get(0).get("eventType"), "stored decision history type");
+        assertEquals(secondRaw.immichAssetId(), events.get(0).get("rawAssetId"), "stored selected RAW");
+        assertEquals(firstRaw.immichAssetId(), events.get(0).get("previousRawAssetId"), "stored original RAW suggestion");
+    }
+
     private static void autoAcceptsUniqueExactTimestamp() {
         Instant captureTime = Instant.parse("2024-01-01T10:00:00Z");
         PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "BURST_A.CR3", "/raw/BURST_A.CR3", 1,
@@ -321,7 +382,7 @@ public final class Tests {
                 List.of(new MatchResult(finished, raw, 80, "review", MatchStatus.NEEDS_REVIEW, null)),
                 90, 50
         );
-        PhotoCullServer server = new PhotoCullServer(8356, Path.of("build", "test-config"), config("", "raw-key", "final-key"));
+        PhotoCullServer server = new PhotoCullServer(8356, Path.of("build", "test-config"), config("raw-key", "final-key"));
         Method sessionJson = PhotoCullServer.class.getDeclaredMethod("sessionJson", ScanSession.class);
         sessionJson.setAccessible(true);
         Map<String, Object> sessionPayload = Json.parseObject((String) sessionJson.invoke(server, session));
@@ -383,30 +444,25 @@ public final class Tests {
         MatchResult result = matches.get(0);
         assertEquals(MatchStatus.NEEDS_REVIEW, result.status(), "ambiguous raw match status");
         assertTrue(result.reason().contains("multiple strong RAW candidates"), "ambiguous raw match reason");
+        assertEquals(2, result.candidates().size(), "ambiguous match retains review candidates");
     }
 
-    private static void fallsBackToSharedImmichApiKey() {
-        ImmichConfig shared = config("shared-key", "", "");
-        assertEquals("shared-key", shared.effectiveRawApiKey(), "raw key falls back to shared");
-        assertEquals("shared-key", shared.effectiveFinalApiKey(), "final key falls back to shared");
-        assertEquals(true, shared.rawApiKeyConfigured(), "raw key configured by fallback");
-        assertEquals(true, shared.finalApiKeyConfigured(), "final key configured by fallback");
-
-        ImmichConfig split = config("", "raw-key", "final-key");
+    private static void requiresAccountSpecificImmichApiKeys() {
+        ImmichConfig split = config("raw-key", "final-key");
         assertEquals("raw-key", split.effectiveRawApiKey(), "separate raw key");
         assertEquals("final-key", split.effectiveFinalApiKey(), "separate final key");
         assertEquals("RAW_IMMICH_API_KEY", split.rawApiKeySource(), "raw key source");
         assertEquals("FINAL_IMMICH_API_KEY", split.finalApiKeySource(), "final key source");
 
-        ImmichConfig missingRaw = config("", "", "final-key");
-        assertTrue(missingRaw.missingFields().contains("RAW_IMMICH_API_KEY or IMMICH_API_KEY"), "raw key missing");
-        assertTrue(!missingRaw.missingFields().contains("FINAL_IMMICH_API_KEY or IMMICH_API_KEY"), "final key present");
+        ImmichConfig missingRaw = config("", "final-key");
+        assertTrue(missingRaw.missingFields().contains("RAW_IMMICH_API_KEY"), "raw key missing");
+        assertTrue(!missingRaw.missingFields().contains("FINAL_IMMICH_API_KEY"), "final key present");
     }
 
     private static void scansRawAndFinalAssetsWithSeparateClients() throws IOException, InterruptedException {
         RecordingImmichApi rawApi = new RecordingImmichApi(List.of(asset("raw-asset", "raw-user", "IMG_0001.CR3")));
         RecordingImmichApi finalApi = new RecordingImmichApi(List.of(asset("final-asset", "final-user", "IMG_0001.jpg")));
-        ImmichWorkflow workflow = new ImmichWorkflow(config("", "raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
+        ImmichWorkflow workflow = new ImmichWorkflow(config("raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
 
         ScanSession session = workflow.scan(90, ignored -> {
         });
@@ -420,7 +476,7 @@ public final class Tests {
     private static void appliesTagsWithSideSpecificClients() throws IOException, InterruptedException {
         RecordingImmichApi rawApi = new RecordingImmichApi();
         RecordingImmichApi finalApi = new RecordingImmichApi();
-        ImmichWorkflow workflow = new ImmichWorkflow(config("", "raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
+        ImmichWorkflow workflow = new ImmichWorkflow(config("raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
         PhotoFile rawKeeper = photo("raw-keeper", "raw-user", "IMG_0001.CR3");
         PhotoFile rawUnused = photo("raw-unused", "raw-user", "IMG_0002.CR3");
         PhotoFile rawDuplicate = photo("raw-duplicate", "raw-user", "DUP_0004.CR3");
@@ -457,10 +513,70 @@ public final class Tests {
         assertTrue(finalApi.taggedAssetIds.contains("final-small"), "final client tags duplicate final");
     }
 
+    private static void freezesExactPlanBeforeApplying() {
+        PhotoFile raw = photo("raw-1", "raw-user", "IMG_0001.CR3");
+        PhotoFile finished = photo("final-1", "final-user", "IMG_0001.jpg");
+        ScanSession session = new ScanSession(
+                List.of(raw), List.of(finished),
+                List.of(new MatchResult(finished, raw, 95, "accepted", MatchStatus.ACCEPTED, null)),
+                90, 50
+        );
+
+        ImmutableTagPlan plan = ImmutableTagPlan.fromSession(session, config("raw-key", "final-key"));
+        PlanApplyOperation operation = PlanApplyOperation.create(plan);
+
+        assertEquals(true, plan.matches(session, config("raw-key", "final-key")), "frozen plan matches source session");
+        assertEquals(false, plan.matches(session, new ImmichConfig(
+                "http://immich.local/api", "raw-key", "final-key", "raw-user", "final-user",
+                "Different Keeper", "not used", "RAW Found", "No RAW", "duplicate", 1000, 10000
+        )), "frozen plan rejects changed tag configuration");
+        assertEquals("apply-" + plan.id(), operation.id(), "operation is deterministic for the plan");
+        assertTrue(operation.steps().stream().anyMatch(step -> step.id().equals("remove-raw-unused-from-keepers")),
+                "operation includes raw reconciliation");
+        assertTrue(operation.steps().stream().anyMatch(step -> step.id().equals("add-final-raw-found")),
+                "operation includes final application");
+    }
+
+    private static void reconcilesStaleDecisionTags() throws IOException, InterruptedException {
+        RecordingImmichApi rawApi = new RecordingImmichApi();
+        RecordingImmichApi finalApi = new RecordingImmichApi();
+        rawApi.visibleTags.addAll(List.of(
+                new ImmichTag("raw-keeper", "Keeper", "Keeper"),
+                new ImmichTag("raw-unused", "not used", "not used")
+        ));
+        finalApi.visibleTags.addAll(List.of(
+                new ImmichTag("final-found", "RAW Found", "RAW Found"),
+                new ImmichTag("final-none", "No RAW", "No RAW"),
+                new ImmichTag("final-duplicate", "duplicate", "duplicate")
+        ));
+        ImmichWorkflow workflow = new ImmichWorkflow(config("raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
+        PhotoFile keeper = photo("raw-keeper", "raw-user", "IMG_0001.CR3");
+        PhotoFile unused = photo("raw-unused", "raw-user", "IMG_0002.CR3");
+        PhotoFile matched = photo("final-matched", "final-user", "IMG_0001.jpg");
+        PhotoFile unmatched = photo("final-unmatched", "final-user", "EXPORT_ONLY.jpg");
+        ScanSession session = new ScanSession(
+                List.of(keeper, unused), List.of(matched, unmatched),
+                List.of(
+                        new MatchResult(matched, keeper, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null),
+                        new MatchResult(unmatched, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null)
+                ),
+                90, 50
+        );
+
+        ImmutableTagPlan plan = ImmutableTagPlan.fromSession(session, config("raw-key", "final-key"));
+        PlanApplyOperation operation = PlanApplyOperation.create(plan);
+        workflow.applyTags(plan, operation, ignored -> { });
+
+        assertEquals(PlanApplyOperation.State.COMPLETE, operation.state(), "reconciled operation completes");
+        assertTrue(rawApi.untaggedAssetIds.contains("raw-keeper"), "removes stale unused tag from keeper RAW");
+        assertTrue(rawApi.untaggedAssetIds.contains("raw-unused"), "removes stale keeper tag from unused RAW");
+        assertTrue(finalApi.untaggedAssetIds.contains("final-matched"), "removes stale No RAW tag from matched final");
+        assertTrue(finalApi.untaggedAssetIds.contains("final-unmatched"), "removes stale RAW Found tag from unmatched final");
+    }
+
     private static void omitsApiKeysFromStatusJson() throws Exception {
         ImmichConfig config = new ImmichConfig(
                 "http://immich.local/api",
-                "shared-secret",
                 "raw-secret",
                 "final-secret",
                 "raw-user",
@@ -480,20 +596,17 @@ public final class Tests {
         Map<String, Object> parsed = Json.parseObject(json);
         Map<?, ?> immich = (Map<?, ?>) parsed.get("immich");
 
-        assertEquals(Boolean.TRUE, immich.get("sharedApiKeyConfigured"), "shared key status");
         assertEquals(Boolean.TRUE, immich.get("rawApiKeyConfigured"), "raw key status");
         assertEquals(Boolean.TRUE, immich.get("finalApiKeyConfigured"), "final key status");
         assertEquals("RAW_IMMICH_API_KEY", immich.get("rawApiKeySource"), "raw status source");
         assertEquals("FINAL_IMMICH_API_KEY", immich.get("finalApiKeySource"), "final status source");
-        assertTrue(!json.contains("shared-secret"), "shared key hidden");
         assertTrue(!json.contains("raw-secret"), "raw key hidden");
         assertTrue(!json.contains("final-secret"), "final key hidden");
     }
 
-    private static ImmichConfig config(String sharedKey, String rawKey, String finalKey) {
+    private static ImmichConfig config(String rawKey, String finalKey) {
         return new ImmichConfig(
                 "http://immich.local/api",
-                sharedKey,
                 rawKey,
                 finalKey,
                 "raw-user",
@@ -567,6 +680,8 @@ public final class Tests {
         private final List<String> searchOwners = new ArrayList<>();
         private final List<String> ensuredTags = new ArrayList<>();
         private final List<String> taggedAssetIds = new ArrayList<>();
+        private final List<String> untaggedAssetIds = new ArrayList<>();
+        private final List<ImmichTag> visibleTags = new ArrayList<>();
 
         private RecordingImmichApi() {
             this(List.of());
@@ -593,12 +708,29 @@ public final class Tests {
         @Override
         public ImmichTag ensureTag(String name) {
             ensuredTags.add(name);
-            return new ImmichTag("tag-" + name, name, name);
+            ImmichTag existing = visibleTags.stream().filter(tag -> tag.name().equalsIgnoreCase(name)).findFirst().orElse(null);
+            if (existing != null) {
+                return existing;
+            }
+            ImmichTag created = new ImmichTag("tag-" + name, name, name);
+            visibleTags.add(created);
+            return created;
+        }
+
+        @Override
+        public List<ImmichTag> tags() {
+            return List.copyOf(visibleTags);
         }
 
         @Override
         public int tagAssets(String tagId, List<String> assetIds) {
             taggedAssetIds.addAll(assetIds);
+            return assetIds.size();
+        }
+
+        @Override
+        public int untagAssets(String tagId, List<String> assetIds) {
+            untaggedAssetIds.addAll(assetIds);
             return assetIds.size();
         }
 

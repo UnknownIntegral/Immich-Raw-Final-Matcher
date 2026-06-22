@@ -66,6 +66,10 @@ public final class ImmichTagManifestWriter {
     }
 
     private String csv(String value) {
-        return "\"" + value.replace("\"", "\"\"") + "\"";
+        String safe = value == null ? "" : value;
+        if (!safe.isBlank() && "=+-@".indexOf(safe.charAt(0)) >= 0) {
+            safe = "'" + safe;
+        }
+        return "\"" + safe.replace("\"", "\"\"") + "\"";
     }
 }

@@ -2,6 +2,7 @@ package com.photocull.server;
 
 import com.photocull.matcher.MatchResult;
 import com.photocull.matcher.MatchStatus;
+import com.photocull.matcher.MatchCandidate;
 import com.photocull.matcher.PhotoFile;
 
 import java.io.IOException;
@@ -67,6 +68,19 @@ final class SessionStore {
             row.put("score", result.score());
             row.put("reason", result.reason());
             row.put("status", result.status().name());
+            List<Map<String, Object>> candidates = new ArrayList<>();
+            for (MatchCandidate candidate : result.candidates()) {
+                Integer rawIndex = rawIndexes.get(candidate.raw().path());
+                if (rawIndex == null) {
+                    continue;
+                }
+                Map<String, Object> candidateRow = new LinkedHashMap<>();
+                candidateRow.put("rawIndex", rawIndex);
+                candidateRow.put("score", candidate.score());
+                candidateRow.put("reason", candidate.reason());
+                candidates.add(candidateRow);
+            }
+            row.put("candidates", candidates);
             results.add(row);
         }
         values.put("results", results);
@@ -91,8 +105,18 @@ final class SessionStore {
             } catch (IllegalArgumentException ignored) {
                 status = MatchStatus.NEEDS_REVIEW;
             }
+            List<MatchCandidate> candidates = new ArrayList<>();
+            for (Object candidateItem : array(row.get("candidates"))) {
+                Map<String, Object> candidateRow = object(candidateItem);
+                int candidateRawIndex = number(candidateRow.get("rawIndex"), -1);
+                if (candidateRawIndex < 0 || candidateRawIndex >= raws.size()) {
+                    continue;
+                }
+                candidates.add(new MatchCandidate(raws.get(candidateRawIndex), number(candidateRow.get("score"), 0),
+                        string(candidateRow.get("reason"), "")));
+            }
             results.add(new MatchResult(finals.get(finalIndex), raw, number(row.get("score"), 0),
-                    string(row.get("reason"), ""), status, null));
+                    string(row.get("reason"), ""), status, null, candidates));
         }
         return ScanSession.restored(instant(values.get("createdAt")), raws, finals, results,
                 number(values.get("autoAcceptThreshold"), 90), number(values.get("autoRejectThreshold"), 50),

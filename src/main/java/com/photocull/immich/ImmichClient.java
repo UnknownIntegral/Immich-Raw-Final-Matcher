@@ -85,6 +85,7 @@ public final class ImmichClient implements ImmichApi {
         return assets;
     }
 
+    @Override
     public List<ImmichTag> tags() throws IOException, InterruptedException {
         Object parsed = Json.parse(send("GET", "/tags", null));
         List<ImmichTag> tags = new ArrayList<>();
@@ -116,15 +117,32 @@ public final class ImmichClient implements ImmichApi {
     }
 
     public int tagAssets(String tagId, List<String> assetIds) throws IOException, InterruptedException {
+        return updateTagAssets("PUT", tagId, assetIds);
+    }
+
+    @Override
+    public int untagAssets(String tagId, List<String> assetIds) throws IOException, InterruptedException {
+        return updateTagAssets("DELETE", tagId, assetIds);
+    }
+
+    private int updateTagAssets(String method, String tagId, List<String> assetIds) throws IOException, InterruptedException {
         if (assetIds.isEmpty()) {
             return 0;
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ids", assetIds);
-        Object parsed = Json.parse(send("PUT", "/tags/" + segment(tagId) + "/assets", Json.object(body)));
+        String response = send(method, "/tags/" + segment(tagId) + "/assets", Json.object(body));
+        if (response == null || response.isBlank()) {
+            return assetIds.size();
+        }
+        Object parsed = Json.parse(response);
+        if (!(parsed instanceof List<?>)) {
+            return assetIds.size();
+        }
         int tagged = 0;
         for (Object item : array(parsed)) {
-            if (Boolean.TRUE.equals(object(item).get("success"))) {
+            Map<String, Object> result = object(item);
+            if (result.isEmpty() || Boolean.TRUE.equals(result.get("success"))) {
                 tagged++;
             }
         }

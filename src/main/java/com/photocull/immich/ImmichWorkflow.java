@@ -2,9 +2,9 @@ package com.photocull.immich;
 
 import com.photocull.matcher.MatchEngine;
 import com.photocull.matcher.PhotoFile;
-import com.photocull.server.FinalTagPlanItem;
+import com.photocull.server.ImmutableTagPlan;
+import com.photocull.server.PlanApplyOperation;
 import com.photocull.server.ScanSession;
-import com.photocull.server.TagPlanItem;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -75,92 +75,146 @@ public final class ImmichWorkflow {
     }
 
     public ImmichTagApplyResult applyTags(ScanSession session, Path configDir) throws IOException, InterruptedException {
-        config.requireConfigured();
-        if (session.rawReviewCount() > 0) {
-            throw new IllegalStateException("Resolve RAW matches that still need review before applying Immich tags.");
-        }
-
-        List<TagPlanItem> rawPlan = session.tagPlan(config.keeperTag(), config.unusedTag());
-        List<FinalTagPlanItem> finalPlan = session.finalTagPlan(config.rawFoundTag(), config.noRawTag(), config.duplicateTag());
-        List<String> keeperIds = new ArrayList<>();
-        List<String> unusedIds = new ArrayList<>();
-        for (TagPlanItem item : rawPlan) {
-            if (item.rawAssetId() == null || item.rawAssetId().isBlank()) {
-                throw new IllegalStateException("Tag plan contains RAW rows without Immich asset IDs.");
-            }
-            if (item.tag().equals(config.keeperTag())) {
-                keeperIds.add(item.rawAssetId());
-            } else if (item.tag().equals(config.unusedTag())) {
-                unusedIds.add(item.rawAssetId());
-            }
-        }
-
-        List<String> rawFoundIds = new ArrayList<>();
-        List<String> noRawIds = new ArrayList<>();
-        List<String> duplicateIds = new ArrayList<>();
-        for (FinalTagPlanItem item : finalPlan) {
-            if (item.finalAssetId() == null || item.finalAssetId().isBlank()) {
-                throw new IllegalStateException("Tag plan contains final-image rows without Immich asset IDs.");
-            }
-            if (item.tag().equals(config.rawFoundTag())) {
-                rawFoundIds.add(item.finalAssetId());
-            } else if (item.tag().equals(config.noRawTag())) {
-                noRawIds.add(item.finalAssetId());
-            } else if (item.tag().equals(config.duplicateTag())) {
-                duplicateIds.add(item.finalAssetId());
-            }
-        }
-
-        int keeperTagged = applyTag(rawClient, "RAW-side", config.keeperTag(), keeperIds);
-        int unusedTagged = applyTag(rawClient, "RAW-side", config.unusedTag(), unusedIds);
-        int rawFoundTagged = applyTag(finalClient, "Final-side", config.rawFoundTag(), rawFoundIds);
-        int noRawTagged = applyTag(finalClient, "Final-side", config.noRawTag(), noRawIds);
-        int duplicateTagged = applyTag(finalClient, "Final-side", config.duplicateTag(), duplicateIds);
-        Path manifest = new ImmichTagManifestWriter().writeCsv(rawPlan, finalPlan, configDir);
-        return new ImmichTagApplyResult(
-                keeperIds.size(),
-                unusedIds.size(),
-                rawFoundIds.size(),
-                noRawIds.size(),
-                duplicateIds.size(),
-                keeperTagged,
-                unusedTagged,
-                rawFoundTagged,
-                noRawTagged,
-                duplicateTagged,
-                manifest
-        );
+        ImmutableTagPlan plan = ImmutableTagPlan.fromSession(session, config);
+        PlanApplyOperation operation = PlanApplyOperation.create(plan);
+        applyTags(plan, operation, ignored -> { });
+        Path manifest = new ImmichTagManifestWriter().writeCsv(
+                session.tagPlan(config.keeperTag(), config.unusedTag()),
+                session.finalTagPlan(config.rawFoundTag(), config.noRawTag(), config.duplicateTag()), configDir);
+        return result(plan, operation, manifest);
     }
 
-    private int applyTag(ImmichApi client, String side, String tagName, List<String> assetIds)
-            throws IOException, InterruptedException {
-        if (assetIds.isEmpty()) {
+    /**
+     * Applies only the supplied immutable snapshot. The checkpoint is called
+     * before and after every external mutation, which lets callers safely
+     * resume an interrupted apply operation.
+     */
+    public ImmichTagApplyResult applyTags(
+            ImmutableTagPlan plan,
+            PlanApplyOperation operation,
+            Consumer<PlanApplyOperation> checkpoint
+    ) throws IOException, InterruptedException {
+        config.requireConfigured();
+        if (!operation.planId().equals(plan.id()) || !operation.planFingerprint().equals(plan.fingerprint())) {
+            throw new IllegalArgumentException("Apply operation does not belong to the approved tag plan.");
+        }
+
+        if (operation.isComplete()) {
+            return result(plan, operation, plan.manifest());
+        }
+        operation.begin();
+        checkpoint.accept(operation);
+        for (PlanApplyOperation.Step step : operation.steps()) {
+            if (step.state() == PlanApplyOperation.StepState.COMPLETE) {
+                continue;
+            }
+            operation.start(step);
+            checkpoint.accept(operation);
+            try {
+                int affected = execute(step);
+                operation.complete(step, affected);
+                checkpoint.accept(operation);
+            } catch (IOException | InterruptedException | RuntimeException ex) {
+                operation.fail(step, ex);
+                checkpoint.accept(operation);
+                throw ex;
+            }
+        }
+        return result(plan, operation, plan.manifest());
+    }
+
+    private int execute(PlanApplyOperation.Step step) throws IOException, InterruptedException {
+        if (step.assetIds().isEmpty()) {
             return 0;
         }
-        try {
-            ImmichTag tag = client.ensureTag(tagName);
-            return tagInBatches(client, tag.id(), assetIds);
-        } catch (IOException ex) {
-            throw new IOException("Immich " + side + " tag operation failed for tag '" + tagName
-                    + "'. Check that the " + sideKeyHint(side)
-                    + " can create tags and tag assets on that side: " + ex.getMessage(), ex);
+        ImmichApi client = ImmutableTagPlan.RAW.equals(step.account()) ? rawClient : finalClient;
+        String side = ImmutableTagPlan.RAW.equals(step.account()) ? "RAW-side" : "Final-side";
+        ImmichTag tag;
+        if (step.mutation() == PlanApplyOperation.Mutation.ADD) {
+            try {
+                tag = client.ensureTag(step.tag());
+            } catch (IOException ex) {
+                throw tagFailure(side, step.tag(), ex);
+            }
+        } else {
+            tag = existingTag(client, step.tag());
+            if (tag == null) {
+                return 0;
+            }
         }
+
+        int affected;
+        try {
+            affected = mutateInBatches(client, tag.id(), step.assetIds(), step.mutation());
+        } catch (IOException ex) {
+            throw tagFailure(side, step.tag(), ex);
+        }
+        if (affected != step.assetIds().size()) {
+            throw new IOException("Immich " + side + " " + step.mutation().name().toLowerCase()
+                    + " operation for tag '" + step.tag() + "' completed " + affected + " of "
+                    + step.assetIds().size() + " requested assets.");
+        }
+        return affected;
     }
 
-    private int tagInBatches(ImmichApi client, String tagId, List<String> assetIds) throws IOException, InterruptedException {
+    private ImmichTag existingTag(ImmichApi client, String name) throws IOException, InterruptedException {
+        for (ImmichTag tag : client.tags()) {
+            if (tag.name().equalsIgnoreCase(name) || tag.value().equalsIgnoreCase(name)) {
+                return tag;
+            }
+        }
+        return null;
+    }
+
+    private int mutateInBatches(
+            ImmichApi client,
+            String tagId,
+            List<String> assetIds,
+            PlanApplyOperation.Mutation mutation
+    ) throws IOException, InterruptedException {
         List<String> uniqueIds = new ArrayList<>(new LinkedHashSet<>(assetIds));
         int tagged = 0;
         int batchSize = 500;
         for (int start = 0; start < uniqueIds.size(); start += batchSize) {
             int end = Math.min(uniqueIds.size(), start + batchSize);
-            tagged += client.tagAssets(tagId, uniqueIds.subList(start, end));
+            List<String> batch = uniqueIds.subList(start, end);
+            tagged += mutation == PlanApplyOperation.Mutation.ADD
+                    ? client.tagAssets(tagId, batch)
+                    : client.untagAssets(tagId, batch);
         }
         return tagged;
     }
 
+    private IOException tagFailure(String side, String tagName, IOException cause) {
+        return new IOException("Immich " + side + " tag operation failed for tag '" + tagName
+                + "'. Check that the " + sideKeyHint(side)
+                + " can manage tags on that side: " + cause.getMessage(), cause);
+    }
+
+    private ImmichTagApplyResult result(ImmutableTagPlan plan, PlanApplyOperation operation, Path manifest) {
+        return new ImmichTagApplyResult(
+                itemCount(plan.rawItems(), ImmutableTagPlan.KEEPER),
+                itemCount(plan.rawItems(), ImmutableTagPlan.UNUSED),
+                itemCount(plan.finalItems(), ImmutableTagPlan.RAW_FOUND),
+                itemCount(plan.finalItems(), ImmutableTagPlan.NO_RAW),
+                itemCount(plan.finalItems(), ImmutableTagPlan.DUPLICATE),
+                operation.affectedAssets("add-raw-keeper"),
+                operation.affectedAssets("add-raw-unused"),
+                operation.affectedAssets("add-final-raw-found"),
+                operation.affectedAssets("add-final-no-raw"),
+                operation.affectedAssets("add-final-duplicate"),
+                manifest
+        );
+    }
+
+    private int itemCount(List<ImmutableTagPlan.PlanItem> items, String decision) {
+        return (int) items.stream().filter(item -> decision.equals(item.decision()))
+                .map(ImmutableTagPlan.PlanItem::assetId).distinct().count();
+    }
+
     private String sideKeyHint(String side) {
         return side.equals("RAW-side")
-                ? "RAW_IMMICH_API_KEY or fallback IMMICH_API_KEY"
-                : "FINAL_IMMICH_API_KEY or fallback IMMICH_API_KEY";
+                ? "RAW_IMMICH_API_KEY"
+                : "FINAL_IMMICH_API_KEY";
     }
 }

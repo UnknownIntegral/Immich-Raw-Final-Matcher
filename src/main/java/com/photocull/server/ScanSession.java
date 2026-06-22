@@ -128,6 +128,14 @@ public final class ScanSession {
     }
 
     public synchronized MatchResult updateStatus(int index, MatchStatus status) {
+        return updateStatus(index, status, null);
+    }
+
+    /**
+     * Commits a review decision and, for an acceptance, can switch from the
+     * initially suggested RAW to one of the retained scored candidates.
+     */
+    public synchronized MatchResult updateStatus(int index, MatchStatus status, String selectedRawAssetId) {
         if (index < 0 || index >= results.size()) {
             throw new IllegalArgumentException("Unknown match index: " + index);
         }
@@ -135,26 +143,47 @@ public final class ScanSession {
         if (current.status() != MatchStatus.NEEDS_REVIEW) {
             throw new IllegalArgumentException("Only a match awaiting review can be accepted or rejected.");
         }
-        if (current.rawPathOrNull() == null && status != MatchStatus.REJECTED) {
+        MatchResult selected = current;
+        if (status == MatchStatus.ACCEPTED && selectedRawAssetId != null && !selectedRawAssetId.isBlank()) {
+            selected = current.withSelectedRaw(rawCandidate(current, selectedRawAssetId));
+        }
+        if (selected.rawPathOrNull() == null && status != MatchStatus.REJECTED) {
             throw new IllegalArgumentException("Cannot accept a row with no RAW match.");
         }
         if (current.status() == status) {
             return current;
         }
 
-        Path rawPath = current.rawPathOrNull();
-        boolean wasUnused = rawPath != null && isUnused(rawPath);
+        Set<Path> affectedRawPaths = new HashSet<>();
+        if (current.rawPathOrNull() != null) {
+            affectedRawPaths.add(current.rawPathOrNull());
+        }
+        if (selected.rawPathOrNull() != null) {
+            affectedRawPaths.add(selected.rawPathOrNull());
+        }
+        Map<Path, Boolean> previouslyUnused = new HashMap<>();
+        for (Path rawPath : affectedRawPaths) {
+            previouslyUnused.put(rawPath, isUnused(rawPath));
+        }
         removeMetrics(current);
-        MatchResult updated = current.withStatus(status);
+        MatchResult updated = selected.withStatus(status);
         results.set(index, updated);
         addMetrics(updated);
-        if (rawPath != null) {
-            updateUnusedCount(rawPath, wasUnused);
+        for (Path rawPath : affectedRawPaths) {
+            updateUnusedCount(rawPath, previouslyUnused.get(rawPath));
         }
         if (status == MatchStatus.ACCEPTED || status == MatchStatus.REJECTED) {
             lastReviewDecisionIndex = index;
         }
         return updated;
+    }
+
+    private PhotoFile rawCandidate(MatchResult result, String assetId) {
+        return result.candidates().stream()
+                .map(candidate -> candidate.raw())
+                .filter(raw -> assetId.equals(raw.immichAssetId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("The selected RAW is not a candidate for this final image."));
     }
 
     /** Restores the most recently reviewed match to the queue. */

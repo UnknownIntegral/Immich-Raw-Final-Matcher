@@ -36,7 +36,7 @@ The app should not require a writable media mount for the Immich workflow. Delet
 
 ## Immich Integration
 
-Use an admin-level Immich API key for discovery where possible, then filter assets by owner:
+Use the account-specific Immich API keys for discovery, then filter assets by owner:
 
 - RAW account: source user for `.cr2`, `.cr3`, `.arw`, `.dng`, `.nef`, etc.
 - Final account: source user for `.jpg`, `.jpeg`, `.png`.
@@ -63,14 +63,14 @@ The matching model should keep Immich asset IDs alongside filesystem paths so re
 
 ## Workflow
 
-1. Configure Immich URL and API key.
+1. Configure Immich URL plus RAW and final account API keys.
 2. Select RAW Immich user.
 3. Select FINAL Immich user.
 4. Configure optional filesystem mounts.
 5. Run scan.
-6. Save dry-run manifest.
-7. Review low-confidence matches.
-8. Re-run dry-run report.
+6. Review low-confidence matches.
+7. Freeze an immutable, fingerprinted dry-run plan and save its manifest.
+8. Apply that exact plan through a checkpointed, resumable operation.
 9. Apply `RAW Found` / `No RAW` / `duplicate` tags to final-account assets and `Keeper` / `not used` tags to RAW-account assets through the Immich API.
 10. Delete or archive `not used` RAWs in Immich after review.
 
@@ -108,7 +108,8 @@ Deletion should happen in Immich after review:
 - Appdata path: `/mnt/user/appdata/photo-culling-assistant`
 - Template variables:
   - Immich URL
-  - Immich API key
+  - RAW Immich API key
+  - Final Immich API key
   - RAW user selector or user ID
   - Final user selector or user ID
   - Immich media mount path
@@ -117,8 +118,13 @@ Deletion should happen in Immich after review:
 ## Safety Defaults
 
 - Dry-run is enabled by default.
-- Tag application is disabled until a dry-run manifest exists.
+- Tag application is disabled until an immutable dry-run plan is approved. The server verifies the plan ID and fingerprint; the browser confirmation is not the safety control.
+- A new scan, review decision, undo, or decision-tag configuration change invalidates the active plan.
+- Each tag-apply operation is persisted before and after every mutation. Interrupted operations resume from the first incomplete step.
+- Scan completion, automatic outcomes, manual review choices, undos, plan approval, and apply result are appended to a fsynced history journal under `/config/history`. The UI must expose this history and filter it by Immich asset ID.
+- Ambiguous reviews retain a bounded list of scored RAW candidates. A reviewer may select one of those candidates; the choice must be recorded with the prior suggestion and reasoning.
+- The app reconciles only its configured decision tags for assets in the approved plan. `Keeper`/`not used` and `RAW Found`/`No RAW` are mutually exclusive; `duplicate` is additive and removed when no longer planned.
 - File move and delete operations are not part of the Unraid workflow.
-- Every tag application writes CSV and JSON manifests.
+- Every approved plan writes CSV and JSON records before mutation; apply-operation JSON records retain completion and failure state.
 - The app should show the exact Immich asset IDs and paths before applying tags.
 - Database integration is read-only and optional.

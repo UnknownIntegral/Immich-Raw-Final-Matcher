@@ -57,6 +57,10 @@ public final class MatchEngine {
                     .sorted(Comparator.comparingInt(ScoredMatch::score).reversed())
                     .toList();
             ScoredMatch best = scoredCandidates.isEmpty() ? null : scoredCandidates.get(0);
+            List<MatchCandidate> reviewCandidates = scoredCandidates.stream()
+                    .limit(5)
+                    .map(match -> new MatchCandidate(match.raw(), match.score(), match.reason()))
+                    .toList();
 
             if (best == null) {
                 results.add(new MatchResult(
@@ -65,7 +69,8 @@ public final class MatchEngine {
                         0,
                         "No RAW candidate found from filename or metadata",
                         MatchStatus.AUTO_REJECTED,
-                        null
+                        null,
+                        reviewCandidates
                 ));
             } else {
                 ScoredMatch second = scoredCandidates.size() < 2 ? null : scoredCandidates.get(1);
@@ -82,13 +87,14 @@ public final class MatchEngine {
                             best.reason() + "; multiple strong RAW candidates, next best "
                                     + second.raw().path() + " scored " + second.score(),
                             MatchStatus.NEEDS_REVIEW,
-                            null
+                            null,
+                            reviewCandidates
                     ));
                 } else {
                     MatchStatus status = best.score() >= autoAcceptThreshold
                             ? MatchStatus.AUTO_ACCEPTED
                             : best.score() <= autoRejectThreshold ? MatchStatus.AUTO_REJECTED : MatchStatus.NEEDS_REVIEW;
-                    results.add(new MatchResult(finished, best.raw(), best.score(), best.reason(), status, null));
+                    results.add(new MatchResult(finished, best.raw(), best.score(), best.reason(), status, null, reviewCandidates));
                 }
             }
 

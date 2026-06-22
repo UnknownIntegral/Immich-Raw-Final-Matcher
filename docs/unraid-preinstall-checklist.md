@@ -10,7 +10,7 @@ It still needs hardening and a real Immich smoke test before pointing it at the 
 
 ## Implemented
 
-- Immich API client using `IMMICH_URL` plus either shared `IMMICH_API_KEY` or side-specific RAW/Final keys.
+- Immich API client using `IMMICH_URL` plus required account-specific RAW and Final keys.
 - Asset discovery that separates the RAW owner and edited-image owner.
 - Match results and tag plans that include Immich asset IDs.
 - `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used` tag lookup/creation through the Immich API.
@@ -26,21 +26,20 @@ It still needs hardening and a real Immich smoke test before pointing it at the 
 - Replace `YOUR_GITHUB_USER` placeholders in the Docker image name, registry links, support URL, project URL, and template URL.
 - Build and publish a container image that Unraid can pull.
 - Test on a small Immich album or temporary user pair before pointing it at the full library.
-- Confirm the configured Immich API key setup can read both accounts and mutate tags. If one key cannot see both users' assets, create separate keys for the RAW and final Immich users.
+- Confirm the RAW and final account API keys can read their respective accounts and mutate their respective decision tags.
 - Set `PCA_ACCESS_TOKEN` in the Unraid template unless the app is isolated on a trusted network.
 
 ## Recommended Unraid Inputs
 
 - `PCA_CONFIG_DIR=/config`
 - `IMMICH_URL=http://immich-server:2283`
-- `IMMICH_API_KEY=<shared key that can see both libraries, if available>`
-- `RAW_IMMICH_API_KEY=<optional RAW user's API key when RAW assets need their own key>`
-- `FINAL_IMMICH_API_KEY=<optional final user's API key when final assets need their own key>`
+- `RAW_IMMICH_API_KEY=<RAW user's API key>`
+- `FINAL_IMMICH_API_KEY=<final-image user's API key>`
 - `RAW_USER_ID=<Immich user ID for RAW assets>`
 - `FINAL_USER_ID=<Immich user ID for edited images>`
 - Read-only Immich media mount, only for local preview/hash reads.
 
-`RAW_IMMICH_API_KEY` and `FINAL_IMMICH_API_KEY` fall back to `IMMICH_API_KEY` when blank. On Unraid, mask all three key variables. `/api/status` only reports whether the effective RAW and final keys are configured; it does not expose secret values.
+Both account-specific keys are required. On Unraid, mask both key variables. `/api/status` only reports whether the RAW and final keys are configured; it does not expose secret values.
 
 ## Safe First Install
 

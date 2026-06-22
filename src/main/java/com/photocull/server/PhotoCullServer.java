@@ -39,11 +39,16 @@ public final class PhotoCullServer {
     private final ImmichWorkflow immichWorkflow;
     private final String accessToken;
     private final SessionStore sessionStore;
+    private final PlanStore planStore;
+    private final HistoryStore historyStore;
     private volatile ScanSession session;
     private volatile ScanJob scanJob;
+    private volatile ImmutableTagPlan activePlan;
+    private volatile PlanApplyOperation activeOperation;
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService persistenceExecutor = Executors.newSingleThreadScheduledExecutor();
     private final Object persistenceLock = new Object();
+    private final Object applyLock = new Object();
     private ScheduledFuture<?> pendingPersistence;
     private HttpServer server;
 
@@ -62,6 +67,8 @@ public final class PhotoCullServer {
         this.immichWorkflow = new ImmichWorkflow(immichConfig);
         this.accessToken = accessToken == null ? "" : accessToken.trim();
         this.sessionStore = new SessionStore(configDir);
+        this.planStore = new PlanStore(configDir);
+        this.historyStore = new HistoryStore(configDir);
     }
 
     public void start() throws IOException {
@@ -73,6 +80,7 @@ public final class PhotoCullServer {
         server.createContext("/api/session", this::handleSession);
         server.createContext("/api/review", this::handleReview);
         server.createContext("/api/matches", this::handleMatches);
+        server.createContext("/api/history", this::handleHistory);
         server.createContext("/api/match/status", this::handleMatchStatus);
         server.createContext("/api/match/undo", this::handleMatchUndo);
         server.createContext("/api/tag-plan", this::handleTagPlan);
@@ -190,6 +198,26 @@ public final class PhotoCullServer {
         sendJson(exchange, Json.object(values));
     }
 
+    private void handleHistory(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        try {
+            Map<String, String> parameters = query(exchange);
+            int limit = parsePageSize(parameters.get("limit"));
+            String assetId = parameters.get("assetId");
+            Map<String, Object> values = new LinkedHashMap<>();
+            values.put("events", historyStore.list(limit, assetId));
+            sendJson(exchange, Json.object(values));
+        } catch (Exception ex) {
+            send(exchange, 500, "application/json", error(ex.getMessage()));
+        }
+    }
+
     private void handleMatchStatus(HttpExchange exchange) throws IOException {
         if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
             send(exchange, 405, "application/json", error("Method not allowed"));
@@ -210,8 +238,11 @@ public final class PhotoCullServer {
             if (status != MatchStatus.ACCEPTED && status != MatchStatus.REJECTED) {
                 throw new IllegalArgumentException("Review status must be ACCEPTED or REJECTED.");
             }
-            MatchResult updated = session.updateStatus(index, status);
+            MatchResult previous = session.results().get(index);
+            MatchResult updated = session.updateStatus(index, status, form.get("rawAssetId"));
+            invalidateActivePlan();
             persistStateImmediately();
+            historyStore.recordReviewDecision(session, previous, updated);
             sendJson(exchange, matchStatusJson(index, updated));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -230,7 +261,12 @@ public final class PhotoCullServer {
             send(exchange, 409, "application/json", error("No scan session exists yet."));
             return;
         }
-        sendJson(exchange, tagPlanJson(rawTagPlan(), finalTagPlan(), null));
+        ImmutableTagPlan approved = approvedPlanForCurrentSession();
+        if (approved != null) {
+            sendJson(exchange, tagPlanJson(approved));
+        } else {
+            sendJson(exchange, tagPlanJson(rawTagPlan(), finalTagPlan(), null, null));
+        }
     }
 
     private void handleDryRun(HttpExchange exchange) throws IOException {
@@ -247,8 +283,18 @@ public final class PhotoCullServer {
         }
 
         try {
-            Path manifest = new DryRunManifestWriter().writeCsv(rawTagPlan(), finalTagPlan(), configDir);
-            sendJson(exchange, tagPlanJson(rawTagPlan(), finalTagPlan(), manifest));
+            ImmutableTagPlan existing = approvedPlanForCurrentSession();
+            if (existing != null) {
+                sendJson(exchange, tagPlanJson(existing));
+                return;
+            }
+            ImmutableTagPlan plan = ImmutableTagPlan.fromSession(session, immichConfig);
+            activePlan = planStore.freeze(plan);
+            activeOperation = null;
+            historyStore.recordPlanApproved(session, activePlan);
+            sendJson(exchange, tagPlanJson(activePlan));
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            send(exchange, 400, "application/json", error(ex.getMessage()));
         } catch (Exception ex) {
             send(exchange, 500, "application/json", error(ex.getMessage()));
         }
@@ -291,6 +337,7 @@ public final class PhotoCullServer {
             if (autoReject >= autoAccept) {
                 throw new IllegalArgumentException("Auto-reject must be lower than auto-accept.");
             }
+            invalidateActivePlan();
             ScanJob job = new ScanJob(this::schedulePersistState);
             scanJob = job;
             schedulePersistState();
@@ -300,6 +347,8 @@ public final class PhotoCullServer {
                     job.progress("Finding duplicates...");
                     scanSession.duplicateCount();
                     scanSession.duplicateRawCount();
+                    job.progress("Writing durable decision history...");
+                    historyStore.recordScanCompleted(scanSession);
                     session = scanSession;
                     job.complete();
                 } catch (Exception ex) {
@@ -326,9 +375,15 @@ public final class PhotoCullServer {
         }
 
         try {
+            Integer lastIndex = session.lastReviewDecisionIndex();
+            MatchResult previous = lastIndex == null ? null : session.results().get(lastIndex);
             MatchResult restored = session.undoLastReviewDecision();
             int index = session.results().indexOf(restored);
+            invalidateActivePlan();
             persistStateImmediately();
+            if (previous != null) {
+                historyStore.recordReviewUndo(session, previous, restored);
+            }
             sendJson(exchange, matchStatusJson(index, restored));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -399,22 +454,51 @@ public final class PhotoCullServer {
             return;
         }
 
+        ImmutableTagPlan plan = null;
+        PlanApplyOperation operation = null;
         try {
-            ImmichTagApplyResult result = immichWorkflow.applyTags(session, configDir);
-            Map<String, Object> values = new LinkedHashMap<>();
-            values.put("keeperAssets", result.keeperAssets());
-            values.put("unusedAssets", result.unusedAssets());
-            values.put("rawFoundAssets", result.rawFoundAssets());
-            values.put("noRawAssets", result.noRawAssets());
-            values.put("duplicateAssets", result.duplicateAssets());
-            values.put("keeperTagged", result.keeperTagged());
-            values.put("unusedTagged", result.unusedTagged());
-            values.put("rawFoundTagged", result.rawFoundTagged());
-            values.put("noRawTagged", result.noRawTagged());
-            values.put("duplicateTagged", result.duplicateTagged());
-            values.put("manifest", result.manifest());
-            sendJson(exchange, Json.object(values));
+            Map<String, String> form = FormData.parse(FormData.body(exchange));
+            String planId = require(form, "planId");
+            plan = approvedPlanForCurrentSession();
+            if (plan == null) {
+                throw new IllegalStateException("Write a new dry-run plan after resolving reviews before applying Immich tags.");
+            }
+            if (!plan.id().equals(planId)) {
+                throw new IllegalArgumentException("The requested plan is no longer the active approved plan. Refresh and confirm again.");
+            }
+
+            ImmichTagApplyResult result;
+            synchronized (applyLock) {
+                ImmutableTagPlan stillApproved = approvedPlanForCurrentSession();
+                if (stillApproved == null || !stillApproved.id().equals(plan.id())
+                        || !stillApproved.fingerprint().equals(plan.fingerprint())) {
+                    throw new IllegalStateException("The approved plan changed before tag application could start. Refresh and confirm again.");
+                }
+                operation = planStore.loadOrCreateOperation(plan);
+                activeOperation = operation;
+                result = immichWorkflow.applyTags(plan, operation, updated -> {
+                    try {
+                        planStore.saveOperation(updated);
+                        activeOperation = updated;
+                    } catch (IOException ex) {
+                        throw new IllegalStateException("Could not checkpoint the tag application: " + ex.getMessage(), ex);
+                    }
+                });
+            }
+            try {
+                historyStore.recordApplyResult(session, plan, operation, result);
+            } catch (IOException historyFailure) {
+                System.err.println("Could not record completed tag application: " + historyFailure.getMessage());
+            }
+            sendJson(exchange, applyResultJson(result, operation));
         } catch (Exception ex) {
+            if (plan != null) {
+                try {
+                    historyStore.recordApplyFailure(session, plan, operation, ex);
+                } catch (IOException historyFailure) {
+                    System.err.println("Could not record failed tag application: " + historyFailure.getMessage());
+                }
+            }
             send(exchange, 400, "application/json", error(ex.getMessage()));
         }
     }
@@ -430,6 +514,10 @@ public final class PhotoCullServer {
         }
         if (session != null) {
             values.put("session", sessionSummary(session));
+        }
+        ImmutableTagPlan approved = approvedPlanForCurrentSession();
+        if (approved != null) {
+            values.put("activePlan", planSummary(approved));
         }
         return Json.object(values);
     }
@@ -466,6 +554,12 @@ public final class PhotoCullServer {
         values.put("possibleDuplicateRawCount", scanSession.possibleDuplicateRawCount());
         values.put("autoAcceptThreshold", scanSession.threshold());
         values.put("autoRejectThreshold", scanSession.autoRejectThreshold());
+        if (scanSession == session) {
+            ImmutableTagPlan approved = approvedPlanForCurrentSession();
+            if (approved != null) {
+                values.put("activePlan", planSummary(approved));
+            }
+        }
         return values;
     }
 
@@ -492,6 +586,16 @@ public final class PhotoCullServer {
         row.put("rawAssetId", result.raw() == null ? null : result.raw().immichAssetId());
         row.put("rawPath", result.rawPathOrNull());
         row.put("reason", result.reason());
+        List<Map<String, Object>> candidates = new ArrayList<>();
+        for (com.photocull.matcher.MatchCandidate candidate : result.candidates()) {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("rawAssetId", candidate.raw().immichAssetId());
+            value.put("rawPath", candidate.raw().path());
+            value.put("score", candidate.score());
+            value.put("reason", candidate.reason());
+            candidates.add(value);
+        }
+        row.put("candidates", candidates);
         return row;
     }
 
@@ -511,7 +615,6 @@ public final class PhotoCullServer {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("configured", immichConfig.isConfigured());
         values.put("missing", immichConfig.missingFields());
-        values.put("sharedApiKeyConfigured", immichConfig.sharedApiKeyConfigured());
         values.put("rawApiKeyConfigured", immichConfig.rawApiKeyConfigured());
         values.put("finalApiKeyConfigured", immichConfig.finalApiKeyConfigured());
         values.put("rawApiKeySource", immichConfig.rawApiKeySource());
@@ -519,11 +622,21 @@ public final class PhotoCullServer {
         return values;
     }
 
-    private String tagPlanJson(List<TagPlanItem> rawPlan, List<FinalTagPlanItem> finalPlan, Path manifest) {
+    private String tagPlanJson(List<TagPlanItem> rawPlan, List<FinalTagPlanItem> finalPlan, Path manifest, ImmutableTagPlan plan) {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("manifest", manifest);
         values.put("tagPlan", tagPlanRows(rawPlan));
         values.put("finalTagPlan", finalTagPlanRows(finalPlan));
+        values.put("plan", plan == null ? null : planSummary(plan));
+        return Json.object(values);
+    }
+
+    private String tagPlanJson(ImmutableTagPlan plan) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("manifest", plan.manifest());
+        values.put("tagPlan", plan.rawItems().stream().map(this::tagPlanRow).toList());
+        values.put("finalTagPlan", plan.finalItems().stream().map(this::finalTagPlanRow).toList());
+        values.put("plan", planSummary(plan));
         return Json.object(values);
     }
 
@@ -567,6 +680,30 @@ public final class PhotoCullServer {
         return rows;
     }
 
+    private Map<String, Object> tagPlanRow(ImmutableTagPlan.PlanItem item) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("tag", item.tag());
+        row.put("rawAssetId", item.assetId());
+        row.put("rawPath", item.path());
+        row.put("matchedFinalAssetId", item.matchedAssetId());
+        row.put("matchedFinalPath", item.matchedPath());
+        row.put("score", item.score());
+        row.put("basis", item.basis());
+        return row;
+    }
+
+    private Map<String, Object> finalTagPlanRow(ImmutableTagPlan.PlanItem item) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("tag", item.tag());
+        row.put("finalAssetId", item.assetId());
+        row.put("finalPath", item.path());
+        row.put("matchedRawAssetId", item.matchedAssetId());
+        row.put("matchedRawPath", item.matchedPath());
+        row.put("score", item.score());
+        row.put("basis", item.basis());
+        return row;
+    }
+
     private String require(Map<String, String> form, String key) {
         String value = form.get(key);
         if (value == null || value.isBlank()) {
@@ -598,6 +735,55 @@ public final class PhotoCullServer {
         } catch (Exception ex) {
             System.err.println("Ignoring unreadable persisted scan state: " + ex.getMessage());
         }
+        try {
+            activePlan = planStore.loadActive().orElse(null);
+            if (activePlan != null && !activePlan.matches(session, immichConfig)) {
+                invalidateActivePlan();
+            } else if (activePlan != null) {
+                activeOperation = planStore.loadOperation(activePlan).orElse(null);
+            }
+        } catch (Exception ex) {
+            activePlan = null;
+            activeOperation = null;
+            System.err.println("Ignoring unreadable persisted tag plan state: " + ex.getMessage());
+        }
+    }
+
+    private ImmutableTagPlan approvedPlanForCurrentSession() {
+        return session == null ? null : activePlan;
+    }
+
+    private void invalidateActivePlan() throws IOException {
+        activePlan = null;
+        activeOperation = null;
+        planStore.clearActive();
+    }
+
+    private Map<String, Object> planSummary(ImmutableTagPlan plan) {
+        Map<String, Object> values = new LinkedHashMap<>(plan.summary());
+        PlanApplyOperation operation = activeOperation;
+        if (operation != null && plan.id().equals(operation.planId())
+                && plan.fingerprint().equals(operation.planFingerprint())) {
+            values.put("operation", operation.summary());
+        }
+        return values;
+    }
+
+    private String applyResultJson(ImmichTagApplyResult result, PlanApplyOperation operation) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("keeperAssets", result.keeperAssets());
+        values.put("unusedAssets", result.unusedAssets());
+        values.put("rawFoundAssets", result.rawFoundAssets());
+        values.put("noRawAssets", result.noRawAssets());
+        values.put("duplicateAssets", result.duplicateAssets());
+        values.put("keeperTagged", result.keeperTagged());
+        values.put("unusedTagged", result.unusedTagged());
+        values.put("rawFoundTagged", result.rawFoundTagged());
+        values.put("noRawTagged", result.noRawTagged());
+        values.put("duplicateTagged", result.duplicateTagged());
+        values.put("manifest", result.manifest());
+        values.put("operation", operation.summary());
+        return Json.object(values);
     }
 
     private int parsePageSize(String value) {
