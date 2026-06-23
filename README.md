@@ -35,6 +35,7 @@ Ready now:
 - Immich tag lookup/creation and tag application for `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used`.
 - Optional shared access token for API actions with `PCA_ACCESS_TOKEN`.
 - Dockerfile and starter Unraid template.
+- GitHub Actions publishing of a Linux amd64 image to `ghcr.io/unknownintegral/photo-culling-assistant:latest`.
 - Lightweight automated tests for JSON parsing, Immich asset mapping, and asset-ID tag plans.
 
 Not ready yet for the final Immich workflow:
@@ -107,6 +108,14 @@ gradle runServer
 ```
 
 Then open `http://localhost:8356`.
+
+## Unraid Docker Template and Updates
+
+The Unraid template is at `unraid/photo-culling-assistant.xml` and installs the image
+`ghcr.io/unknownintegral/photo-culling-assistant:latest`. After the first GitHub Actions
+workflow run, make the package **public** in GitHub's package settings so Unraid can pull
+it without registry credentials. Install the template once, retain the `/config` mapping,
+then use Unraid's Docker update control for future releases.
 
 ## Build
 
