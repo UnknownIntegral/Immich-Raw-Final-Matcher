@@ -6,6 +6,7 @@ import com.photocull.immich.ImmichUser;
 import com.photocull.immich.ImmichWorkflow;
 import com.photocull.matcher.MatchResult;
 import com.photocull.matcher.MatchStatus;
+import com.photocull.matcher.PhotoFile;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -583,20 +584,36 @@ public final class PhotoCullServer {
         row.put("score", result.score());
         row.put("finishedAssetId", result.finished().immichAssetId());
         row.put("finishedPath", result.finished().path());
+        row.put("finishedMetadata", comparisonMetadata(result.finished()));
         row.put("rawAssetId", result.raw() == null ? null : result.raw().immichAssetId());
         row.put("rawPath", result.rawPathOrNull());
+        row.put("rawMetadata", result.raw() == null ? null : comparisonMetadata(result.raw()));
         row.put("reason", result.reason());
         List<Map<String, Object>> candidates = new ArrayList<>();
         for (com.photocull.matcher.MatchCandidate candidate : result.candidates()) {
             Map<String, Object> value = new LinkedHashMap<>();
             value.put("rawAssetId", candidate.raw().immichAssetId());
             value.put("rawPath", candidate.raw().path());
+            value.put("rawMetadata", comparisonMetadata(candidate.raw()));
             value.put("score", candidate.score());
             value.put("reason", candidate.reason());
             candidates.add(value);
         }
         row.put("candidates", candidates);
         return row;
+    }
+
+    private Map<String, Object> comparisonMetadata(PhotoFile file) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("filename", file.path().getFileName() == null ? file.path().toString() : file.path().getFileName().toString());
+        metadata.put("fileType", file.extension().isBlank() ? null : file.extension().toUpperCase());
+        metadata.put("captureTimestamp", file.captureTime());
+        metadata.put("cameraType", String.join(" ", List.of(file.make(), file.model()).stream()
+                .filter(value -> value != null && !value.isBlank())
+                .toList()));
+        metadata.put("fileSizeBytes", file.sizeBytes());
+        metadata.put("modifiedTimestamp", file.lastModified());
+        return metadata;
     }
 
     private List<Map<String, Object>> userRows(List<ImmichUser> users) {

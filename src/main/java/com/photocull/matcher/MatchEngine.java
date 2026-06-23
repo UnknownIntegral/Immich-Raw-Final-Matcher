@@ -54,7 +54,10 @@ public final class MatchEngine {
             List<ScoredMatch> scoredCandidates = candidates.stream()
                     .map(raw -> score(finished, raw))
                     .filter(match -> match.score() > 0)
-                    .sorted(Comparator.comparingInt(ScoredMatch::score).reversed())
+                    .sorted(Comparator.comparingInt(ScoredMatch::score).reversed()
+                            .thenComparing(Comparator.comparingInt(ScoredMatch::evidenceScore).reversed())
+                            .thenComparing(Comparator.comparingInt(ScoredMatch::nameScore).reversed())
+                            .thenComparing(match -> match.raw().path().toString()))
                     .toList();
             ScoredMatch best = scoredCandidates.isEmpty() ? null : scoredCandidates.get(0);
             List<MatchCandidate> reviewCandidates = scoredCandidates.stream()
@@ -74,9 +77,9 @@ public final class MatchEngine {
                 ));
             } else {
                 ScoredMatch second = scoredCandidates.size() < 2 ? null : scoredCandidates.get(1);
-                boolean ambiguousRawMatch = best.score() > autoRejectThreshold && second != null && (
-                        exactTimestampCollision(finished, best.raw(), second.raw())
-                                || second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, autoAcceptThreshold - 10)
+                boolean exactTimestampMatch = sameCaptureTimestamp(finished, best.raw());
+                boolean ambiguousRawMatch = !exactTimestampMatch && best.score() > autoRejectThreshold && second != null && (
+                        second.score() >= Math.max(AMBIGUOUS_RAW_MATCH_MIN_SCORE, autoAcceptThreshold - 10)
                                 && best.score() - second.score() <= AMBIGUOUS_RAW_MATCH_MARGIN
                 );
                 if (ambiguousRawMatch) {
@@ -160,13 +163,8 @@ public final class MatchEngine {
         return low;
     }
 
-    private boolean exactTimestampCollision(PhotoFile finished, PhotoFile firstRaw, PhotoFile secondRaw) {
-        return sameInstant(finished.captureTime(), firstRaw.captureTime())
-                && sameInstant(finished.captureTime(), secondRaw.captureTime());
-    }
-
-    private boolean sameInstant(Instant first, Instant second) {
-        return first != null && first.equals(second);
+    private boolean sameCaptureTimestamp(PhotoFile first, PhotoFile second) {
+        return first.captureTime() != null && first.captureTime().equals(second.captureTime());
     }
 
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
@@ -177,22 +175,22 @@ public final class MatchEngine {
         int metadataScore = metadataScore(finished, raw, reasons);
         int folderDateScore = folderDateScore(finished, raw, reasons);
 
-        int score = Math.max(Math.max(nameScore, timeScore), visualScore);
+        int evidenceScore = Math.max(Math.max(nameScore, timeScore), visualScore);
         if (nameScore >= 70 && timeScore >= 58) {
-            score += 12;
+            evidenceScore += 12;
         } else if (nameScore >= 45 && timeScore >= 72) {
-            score += 10;
+            evidenceScore += 10;
         }
         if (visualScore >= 68 && (nameScore >= 45 || timeScore >= 58)) {
-            score += 8;
+            evidenceScore += 8;
         }
-        score += metadataScore + folderDateScore;
-        score = Math.max(0, Math.min(100, score));
+        evidenceScore += metadataScore + folderDateScore;
+        int score = Math.max(0, Math.min(100, evidenceScore));
 
         if (reasons.isEmpty()) {
             reasons.add("Weak filename similarity");
         }
-        return new ScoredMatch(raw, score, String.join("; ", reasons));
+        return new ScoredMatch(raw, score, evidenceScore, nameScore, String.join("; ", reasons));
     }
 
     private int nameScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
@@ -332,6 +330,6 @@ public final class MatchEngine {
         return bigrams;
     }
 
-    private record ScoredMatch(PhotoFile raw, int score, String reason) {
+    private record ScoredMatch(PhotoFile raw, int score, int evidenceScore, int nameScore, String reason) {
     }
 }

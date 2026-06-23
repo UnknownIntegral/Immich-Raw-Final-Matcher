@@ -43,11 +43,13 @@ public final class Tests {
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
         autoAcceptsUniqueExactTimestamp();
+        autoAcceptsExactTimestampWithOtherCandidates();
         updatesCachedSessionMetricsDuringReview();
         acceptsReviewerSelectedAlternativeCandidate();
         recordsDurableDecisionHistory();
         undoesLastReviewDecision();
         keepsSessionAndReviewUpdatesSmall();
+        providesReviewComparisonMetadata();
         separatesExactAndPossibleDuplicates();
         flagsFinalsWithMultipleStrongRawCandidates();
         requiresAccountSpecificImmichApiKeys();
@@ -355,6 +357,21 @@ public final class Tests {
         assertEquals(MatchStatus.AUTO_ACCEPTED, match.status(), "unique exact timestamp is auto accepted");
     }
 
+    private static void autoAcceptsExactTimestampWithOtherCandidates() {
+        Instant captureTime = Instant.parse("2024-01-01T10:00:00Z");
+        PhotoFile namedRaw = PhotoFile.fromImmichAsset("raw-named", "raw-owner", "IMG_0001.CR3", "/raw/IMG_0001.CR3", 1,
+                captureTime, captureTime, "Canon", "R5");
+        PhotoFile otherRaw = PhotoFile.fromImmichAsset("raw-other", "raw-owner", "COPY_0001.CR3", "/raw/COPY_0001.CR3", 1,
+                captureTime, captureTime, "Canon", "R5");
+        PhotoFile finished = PhotoFile.fromImmichAsset("final-1", "final-owner", "IMG_0001.jpg", "/final/IMG_0001.jpg", 1,
+                captureTime, captureTime, "Canon", "R5");
+
+        MatchResult match = new MatchEngine().match(List.of(namedRaw, otherRaw), List.of(finished), 90, 50, ignored -> { }).get(0);
+        assertEquals(100, match.score(), "exact timestamp remains a perfect score with alternatives");
+        assertEquals(MatchStatus.AUTO_ACCEPTED, match.status(), "exact timestamp does not require review");
+        assertEquals("raw-named", match.raw().immichAssetId(), "stronger filename evidence breaks an exact-time tie");
+    }
+
     private static void undoesLastReviewDecision() {
         PhotoFile raw = photo("raw-1", "raw-owner", "IMG_0001.CR3");
         PhotoFile finished = photo("final-1", "final-owner", "IMG_0001.jpg");
@@ -392,6 +409,30 @@ public final class Tests {
         assertTrue(!sessionPayload.containsKey("tagPlan"), "session payload excludes full tag plan");
     }
 
+    private static void providesReviewComparisonMetadata() throws Exception {
+        Instant timestamp = Instant.parse("2024-01-01T10:00:00Z");
+        PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "IMG_0001.CR3", "/raw/IMG_0001.CR3", 12_345,
+                timestamp, timestamp, "Canon", "R5");
+        PhotoFile finished = PhotoFile.fromImmichAsset("final-1", "final-owner", "IMG_0001.jpg", "/final/IMG_0001.jpg", 6_789,
+                timestamp, timestamp, "Canon", "R5");
+        PhotoCullServer server = new PhotoCullServer(8356, Path.of("build", "test-config"), config("raw-key", "final-key"));
+        Method matchRow = PhotoCullServer.class.getDeclaredMethod("matchRow", int.class, MatchResult.class);
+        matchRow.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> row = (Map<String, Object>) matchRow.invoke(server, 0,
+                new MatchResult(finished, raw, 100, "exact capture timestamp", MatchStatus.AUTO_ACCEPTED, null));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> finalMetadata = (Map<String, Object>) row.get("finishedMetadata");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rawMetadata = (Map<String, Object>) row.get("rawMetadata");
+
+        assertEquals("IMG_0001.jpg", finalMetadata.get("filename"), "comparison includes final filename");
+        assertEquals("JPG", finalMetadata.get("fileType"), "comparison includes final type");
+        assertEquals(timestamp, finalMetadata.get("captureTimestamp"), "comparison includes final capture time");
+        assertEquals("Canon R5", rawMetadata.get("cameraType"), "comparison includes RAW camera type");
+        assertEquals(12_345L, rawMetadata.get("fileSizeBytes"), "comparison includes RAW file size");
+    }
+
     private static void separatesExactAndPossibleDuplicates() {
         PhotoFile exactFirst = photo("raw-1", "raw-owner", "IMG_0001.CR3", 200, "same-content");
         PhotoFile exactSecond = photo("raw-2", "raw-owner", "IMG_0002.CR3", 100, "same-content");
@@ -419,11 +460,11 @@ public final class Tests {
         PhotoFile secondRaw = PhotoFile.fromImmichAsset(
                 "raw-2",
                 "raw-owner",
-                "COPY_0001.CR3",
-                "/upload/raw/COPY_0001.CR3",
+                "IMG_0001.CR3",
+                "/upload/raw/second/IMG_0001.CR3",
                 1,
-                Instant.parse("2024-01-01T10:00:00Z"),
-                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:04Z"),
+                Instant.parse("2024-01-01T10:00:04Z"),
                 "",
                 ""
         );
@@ -433,8 +474,8 @@ public final class Tests {
                 "IMG_0001.jpg",
                 "/upload/final/IMG_0001.jpg",
                 1,
-                Instant.parse("2024-01-01T10:00:00Z"),
-                Instant.parse("2024-01-01T10:00:00Z"),
+                Instant.parse("2024-01-01T10:00:03Z"),
+                Instant.parse("2024-01-01T10:00:03Z"),
                 "",
                 ""
         );
