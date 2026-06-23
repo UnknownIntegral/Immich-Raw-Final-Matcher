@@ -177,47 +177,42 @@ public final class ImmichClient implements ImmichApi {
     }
 
     private int updateTagAssets(String method, String tagId, List<String> assetIds) throws IOException, InterruptedException {
-        if (assetIds.isEmpty()) {
-            return 0;
-        }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("ids", assetIds);
-        String response = send(method, "/tags/" + segment(tagId) + "/assets", Json.object(body));
-        if (response == null || response.isBlank()) {
-            return assetIds.size();
-        }
-        Object parsed = Json.parse(response);
-        if (!(parsed instanceof List<?>)) {
-            return assetIds.size();
-        }
-        int tagged = 0;
-        for (Object item : array(parsed)) {
-            Map<String, Object> result = object(item);
-            if (result.isEmpty() || Boolean.TRUE.equals(result.get("success"))) {
-                tagged++;
-            }
-        }
-        return tagged;
+        return updateAssetMembership(method, "/tags/" + segment(tagId) + "/assets", assetIds);
     }
 
     private int updateAlbumAssets(String method, String albumId, List<String> assetIds) throws IOException, InterruptedException {
+        return updateAssetMembership(method, "/albums/" + segment(albumId) + "/assets", assetIds);
+    }
+
+    /**
+     * Updates a tag or Album membership. Immich returns {@code not_found} for a
+     * DELETE when the asset is not currently a member. That is already the
+     * desired state for reconciliation, so it must be acknowledged as a no-op.
+     */
+    private int updateAssetMembership(String method, String path, List<String> assetIds) throws IOException, InterruptedException {
         if (assetIds.isEmpty()) {
             return 0;
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ids", assetIds);
-        String response = send(method, "/albums/" + segment(albumId) + "/assets", Json.object(body));
+        String response = send(method, path, Json.object(body));
+        return countBulkResults(response, assetIds.size(), "DELETE".equals(method));
+    }
+
+    private static int countBulkResults(String response, int requestedAssets, boolean missingMembershipIsSuccess) {
         if (response == null || response.isBlank()) {
-            return assetIds.size();
+            return requestedAssets;
         }
         Object parsed = Json.parse(response);
         if (!(parsed instanceof List<?>)) {
-            return assetIds.size();
+            return requestedAssets;
         }
         int affected = 0;
         for (Object item : array(parsed)) {
             Map<String, Object> result = object(item);
-            if (result.isEmpty() || Boolean.TRUE.equals(result.get("success"))) {
+            if (result.isEmpty()
+                    || Boolean.TRUE.equals(result.get("success"))
+                    || (missingMembershipIsSuccess && "not_found".equals(result.get("error")))) {
                 affected++;
             }
         }
@@ -388,11 +383,11 @@ public final class ImmichClient implements ImmichApi {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> object(Object value) {
+    private static Map<String, Object> object(Object value) {
         return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
     }
 
-    private List<Object> array(Object value) {
+    private static List<Object> array(Object value) {
         return value instanceof List<?> list ? new ArrayList<>(list) : List.of();
     }
 }

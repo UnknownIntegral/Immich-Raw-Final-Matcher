@@ -8,6 +8,7 @@ import com.photocull.matcher.PhotoFile;
 import com.photocull.immich.ImmichApi;
 import com.photocull.immich.ImmichAlbum;
 import com.photocull.immich.ImmichAsset;
+import com.photocull.immich.ImmichClient;
 import com.photocull.immich.ImmichConfig;
 import com.photocull.immich.ImmichPermissionReport;
 import com.photocull.immich.ImmichTag;
@@ -39,6 +40,7 @@ public final class Tests {
 
     public static void main(String[] args) throws Exception {
         parsesJsonObjects();
+        reconcilesAbsentTagAndAlbumMemberships();
         normalizesImmichApiUrls();
         usesResilientImmichMutationDefaults();
         buildsImmichPhotoFiles();
@@ -75,6 +77,24 @@ public final class Tests {
         assertEquals("a1", first.get("id"), "json id");
         assertEquals(Boolean.TRUE, first.get("ok"), "json bool");
         assertEquals(null, assets.get("nextPage"), "json null");
+    }
+
+    private static void reconcilesAbsentTagAndAlbumMemberships() throws Exception {
+        Method countBulkResults = ImmichClient.class.getDeclaredMethod(
+                "countBulkResults", String.class, int.class, boolean.class);
+        countBulkResults.setAccessible(true);
+
+        String missingMemberships = "["
+                + "{\"id\":\"raw-1\",\"success\":false,\"error\":\"not_found\"},"
+                + "{\"id\":\"raw-2\",\"success\":false,\"error\":\"not_found\"}]";
+        assertEquals(2, countBulkResults.invoke(null, missingMemberships, 2, true),
+                "removing an absent membership is already reconciled");
+        assertEquals(0, countBulkResults.invoke(null, missingMemberships, 2, false),
+                "adding still rejects an absent asset");
+
+        String deniedMembership = "[{\"id\":\"raw-1\",\"success\":false,\"error\":\"no_permission\"}]";
+        assertEquals(0, countBulkResults.invoke(null, deniedMembership, 1, true),
+                "a missing permission remains a failure");
     }
 
     private static void normalizesImmichApiUrls() {
