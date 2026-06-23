@@ -18,7 +18,7 @@ public final class WebUi {
                     header,main { max-width:1440px; margin:auto; padding:20px; } header { padding-bottom:6px; } h1,h2,h3,p { margin-top:0; } h1 { margin-bottom:4px; }
                     section { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:18px; margin-bottom:16px; }
                     .grid { display:grid; grid-template-columns:max-content minmax(100px,1fr) max-content minmax(100px,1fr) max-content; gap:10px; align-items:center; }
-                    input,select { min-width:0; padding:8px; border:1px solid var(--line); border-radius:5px; } button { padding:8px 12px; border:0; border-radius:5px; background:var(--accent); color:#fff; cursor:pointer; } button.secondary { background:#e8efec; color:var(--accent-strong); } button:disabled { opacity:.55; cursor:default; }
+                    input,select { min-width:0; padding:8px; border:1px solid var(--line); border-radius:5px; } button { padding:8px 12px; border:0; border-radius:5px; background:var(--accent); color:#fff; cursor:pointer; } button.secondary { background:#e8efec; color:var(--accent-strong); } button.danger { background:var(--bad); } button:disabled { opacity:.55; cursor:default; }
                     .actions,.tabs { display:flex; gap:8px; flex-wrap:wrap; align-items:center; } .tabs button { background:#fff; color:var(--accent-strong); border:1px solid var(--line); } .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
                     .progress-shell { display:flex; align-items:center; gap:12px; margin-top:14px; } .progress { flex:1; height:11px; border-radius:8px; overflow:hidden; background:#e7e9e7; } .progress > div { height:100%; width:0; background:var(--accent); transition:width .25s; } .progress.indeterminate > div { width:35%; animation:move 1.2s infinite ease-in-out; } @keyframes move { from { transform:translateX(-120%); } to { transform:translateX(320%); } }
                     .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; } .metric { padding:11px; border:1px solid var(--line); border-radius:6px; background:#fbfcf9; } .metric div:first-child { color:var(--muted); font-size:12px; } .metric div:last-child { font-size:21px; font-weight:650; margin-top:3px; }
@@ -39,7 +39,7 @@ public final class WebUi {
                         <button id="scanButton" type="submit">Scan Immich</button>
                       </form>
                       <div class="progress-shell" id="progressShell" hidden><div id="progress" class="progress indeterminate"><div></div></div><span id="progressText" class="status">Starting...</span></div>
-                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Approve dry-run plan</button><button id="applyTagsButton" disabled>Apply approved plan</button><span id="planStatus" class="status"></span><span id="message" class="status"></span></div>
+                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Approve dry-run plan</button><button id="applyTagsButton" disabled>Apply approved plan</button><button id="clearCacheButton" class="danger">Clear saved review data</button><span id="planStatus" class="status"></span><span id="message" class="status"></span></div>
                     </section>
                     <section>
                       <h2>Scan summary</h2>
@@ -80,6 +80,7 @@ public final class WebUi {
                     $('scanForm').addEventListener('submit', startScan);
                     $('dryRunButton').addEventListener('click', writeDryRun);
                     $('applyTagsButton').addEventListener('click', applyTags);
+                    $('clearCacheButton').addEventListener('click', clearReviewCache);
                     $('matchesPrevious').addEventListener('click', () => loadMatches(Math.max(0, state.matchesOffset - MATCHES_PAGE_SIZE)));
                     $('matchesNext').addEventListener('click', () => loadMatches(state.matchesOffset + MATCHES_PAGE_SIZE));
                     ['review','matches','tagPlan','finalTagPlan','history'].forEach(tab => $(tab + 'Tab').addEventListener('click', () => showTab(tab)));
@@ -153,6 +154,23 @@ public final class WebUi {
                       try { const response=await apiFetch('/api/immich/apply-tags',{method:'POST',body:new URLSearchParams({planId:plan.id})}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Tag application failed'); if(state.session?.activePlan) state.session.activePlan.operation=data.operation; render(); message(`Plan applied: ${data.rawFoundTagged}/${data.rawFoundAssets} RAW Found finals and ${data.keeperTagged}/${data.keeperAssets} Keeper RAWs.`); }
                       catch(error){message(error.message);} finally{setBusy(false);}
                     }
+                    async function clearReviewCache() {
+                      if (busy) return;
+                      const warning = 'Clear all saved review data?\\n\\nThis permanently deletes this app’s saved scan results, review decisions, decision history, and tag-plan files. It does not delete photos or change tags in Immich.\\n\\nThis cannot be undone.';
+                      if (!confirm(warning)) return;
+                      setBusy(true); message('Clearing saved review data...');
+                      try {
+                        const response = await apiFetch('/api/cache/clear', {method:'POST', body:new URLSearchParams({confirm:'true'})});
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'Could not clear saved review data');
+                        for (const url of thumbs.values()) URL.revokeObjectURL(url);
+                        thumbs.clear(); thumbnailRequests.clear();
+                        state = { session:null, reviewRows:[], matches:[], matchesOffset:0, matchCount:0, tagPlan:null, finalTagPlan:null, history:[], selectedRawByMatch:new Map() };
+                        activeTab = 'review'; showTab('review'); hideProgress();
+                        message(data.message || 'Saved review data cleared.');
+                      } catch (error) { message(error.message); }
+                      finally { setBusy(false); }
+                    }
                     async function updateStatus(row,status,selectedRawAssetId) {
                       if (busy) return;
                       const rawAssetId=selectedRawAssetId || state.selectedRawByMatch.get(row.index) || row.rawAssetId;
@@ -204,7 +222,7 @@ public final class WebUi {
                       $('possibleFinalCount').textContent=s.possibleDuplicateFinalCount||0; $('possibleRawCount').textContent=s.possibleDuplicateRawCount||0;
                       $('autoAccept').value=s.autoAcceptThreshold||$('autoAccept').value; $('autoReject').value=s.autoRejectThreshold??$('autoReject').value;
                       const plan=s.activePlan; const completed=plan?.operation?.state==='COMPLETE';
-                      $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!plan||completed||busy;
+                      $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!plan||completed||busy; $('clearCacheButton').disabled=busy;
                       $('planStatus').textContent=plan ? `Approved plan ${plan.id.slice(0,8)} (${plan.operation?.state||'READY'})` : (state.session ? 'Approve a dry-run plan before applying tags.' : '');
                     }
                     function renderActiveTab() { if(activeTab==='review') renderReview(); if(activeTab==='matches') renderMatches(); if(activeTab==='tagPlan') renderTagPlan(); if(activeTab==='finalTagPlan') renderFinalTagPlan(); if(activeTab==='history') renderHistory(); }
@@ -245,7 +263,7 @@ public final class WebUi {
                     function showTab(tab){activeTab=tab;['review','matches','tagPlan','finalTagPlan','history'].forEach(name=>{$(name+'Tab').classList.toggle('active',name===tab);$(name+'View').style.display=name===tab?'':'none';});renderActiveTab();if(tab==='review'&&!state.reviewRows.length)void refreshReview();if(tab==='matches'&&!state.matches.length)void loadMatches();if((tab==='tagPlan'||tab==='finalTagPlan')&&state.tagPlan===null)void loadTagPlan();if(tab==='history')void loadHistory();}
                     function showProgress(text,percent){$('progressShell').hidden=false;$('progressText').textContent=text||'Working...';const bar=$('progress');bar.classList.toggle('indeterminate',percent==null||percent<0);bar.firstElementChild.style.width=percent>=0?percent+'%':'';}
                     function hideProgress(){$('progressShell').hidden=true;}
-                    function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan||state.session?.activePlan?.operation?.state==='COMPLETE';if(activeTab==='review')renderReview();}
+                    function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan||state.session?.activePlan?.operation?.state==='COMPLETE';$('clearCacheButton').disabled=value;if(activeTab==='review')renderReview();}
                     async function apiFetch(url,options={},retry=true){const headers=new Headers(options.headers||{});const token=localStorage.getItem('pcaAccessToken');if(token)headers.set('X-PCA-Token',token);const response=await fetch(url,{...options,headers});if(response.status===401&&retry){const entered=prompt('Access token');if(entered!==null){localStorage.setItem('pcaAccessToken',entered);return apiFetch(url,options,false);}}return response;}
                     async function restoreOnLoad(){try{const statusResponse=await apiFetch('/api/status');const status=await statusResponse.json();if(!statusResponse.ok)throw new Error(status.error||'Could not restore app state');if(status.hasSession){await loadSession();await refreshReview();}const job=status.scanJob;if(job?.state==='RUNNING'){setBusy(true);showProgress(job.message,job.percent);await pollScan();}else if(job?.state==='INTERRUPTED'){message(job.error||job.message);}}catch(error){message(error.message);}}
                     render(); restoreOnLoad();

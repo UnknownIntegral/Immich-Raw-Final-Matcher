@@ -129,6 +129,11 @@ public final class HistoryStore {
         return List.copyOf(events);
     }
 
+    /** Deletes the local decision journal. It does not alter any Immich data. */
+    public synchronized void clear() throws IOException {
+        Files.deleteIfExists(eventFile);
+    }
+
     private Map<String, Object> event(String type, ScanSession session) {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("eventId", UUID.randomUUID().toString());

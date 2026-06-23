@@ -51,6 +51,7 @@ public final class PhotoCullServer {
     private final Object persistenceLock = new Object();
     private final Object applyLock = new Object();
     private ScheduledFuture<?> pendingPersistence;
+    private volatile boolean tagApplicationInProgress;
     private HttpServer server;
 
     public PhotoCullServer(int port, Path configDir) {
@@ -82,6 +83,7 @@ public final class PhotoCullServer {
         server.createContext("/api/review", this::handleReview);
         server.createContext("/api/matches", this::handleMatches);
         server.createContext("/api/history", this::handleHistory);
+        server.createContext("/api/cache/clear", this::handleClearCache);
         server.createContext("/api/match/status", this::handleMatchStatus);
         server.createContext("/api/match/undo", this::handleMatchUndo);
         server.createContext("/api/tag-plan", this::handleTagPlan);
@@ -216,6 +218,54 @@ public final class PhotoCullServer {
             sendJson(exchange, Json.object(values));
         } catch (Exception ex) {
             send(exchange, 500, "application/json", error(ex.getMessage()));
+        }
+    }
+
+    private void handleClearCache(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+
+        try {
+            Map<String, String> form = FormData.parse(FormData.body(exchange));
+            if (!"true".equals(form.get("confirm"))) {
+                throw new IllegalArgumentException("Confirm that you want to permanently clear saved review data.");
+            }
+            if (scanRunning()) {
+                send(exchange, 409, "application/json", error("Wait for the active Immich scan to finish before clearing saved review data."));
+                return;
+            }
+            if (tagApplicationInProgress) {
+                send(exchange, 409, "application/json", error("Wait for the active tag application to finish before clearing saved review data."));
+                return;
+            }
+
+            synchronized (applyLock) {
+                if (tagApplicationInProgress) {
+                    send(exchange, 409, "application/json", error("Wait for the active tag application to finish before clearing saved review data."));
+                    return;
+                }
+                session = null;
+                scanJob = null;
+                activePlan = null;
+                activeOperation = null;
+                synchronized (persistenceLock) {
+                    if (pendingPersistence != null) {
+                        pendingPersistence.cancel(false);
+                        pendingPersistence = null;
+                    }
+                }
+                sessionStore.clear();
+                historyStore.clear();
+                planStore.clear();
+            }
+            sendJson(exchange, Json.object(Map.of("message", "Saved review data cleared.")));
+        } catch (Exception ex) {
+            send(exchange, 400, "application/json", error(ex.getMessage()));
         }
     }
 
@@ -477,14 +527,19 @@ public final class PhotoCullServer {
                 }
                 operation = planStore.loadOrCreateOperation(plan);
                 activeOperation = operation;
-                result = immichWorkflow.applyTags(plan, operation, updated -> {
-                    try {
-                        planStore.saveOperation(updated);
-                        activeOperation = updated;
-                    } catch (IOException ex) {
-                        throw new IllegalStateException("Could not checkpoint the tag application: " + ex.getMessage(), ex);
-                    }
-                });
+                tagApplicationInProgress = true;
+                try {
+                    result = immichWorkflow.applyTags(plan, operation, updated -> {
+                        try {
+                            planStore.saveOperation(updated);
+                            activeOperation = updated;
+                        } catch (IOException ex) {
+                            throw new IllegalStateException("Could not checkpoint the tag application: " + ex.getMessage(), ex);
+                        }
+                    });
+                } finally {
+                    tagApplicationInProgress = false;
+                }
             }
             try {
                 historyStore.recordApplyResult(session, plan, operation, result);
@@ -805,6 +860,10 @@ public final class PhotoCullServer {
 
     private int parsePageSize(String value) {
         return Math.max(1, Math.min(MAX_PAGE_SIZE, parseInt(value, DEFAULT_PAGE_SIZE)));
+    }
+
+    private boolean scanRunning() {
+        return scanJob != null && "RUNNING".equals(scanJob.json().get("state"));
     }
 
     private void schedulePersistState() {

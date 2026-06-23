@@ -25,6 +25,7 @@ Ready now:
 - Configurable auto-accept and auto-reject thresholds.
 - Exact duplicate counts from Immich checksums, plus filename-only possible-duplicate counts.
 - Completed scan sessions and review decisions persist under the app config directory and restore when the web UI reconnects.
+- **Clear saved review data** permanently removes the local scan session, decision history, and saved tag-plan records after confirmation; it never deletes Immich media or changes Immich tags.
 - Immutable, fingerprinted CSV/JSON dry-run plans with resumable tag-apply operations.
 - Append-only, fsynced decision history for scans, automatic outcomes, manual review decisions, undo actions, plan approvals, and tag applications.
 - Immich API client using `x-api-key`.

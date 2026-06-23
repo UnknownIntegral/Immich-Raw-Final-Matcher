@@ -50,6 +50,11 @@ final class SessionStore {
         return new StoredState(session, job);
     }
 
+    synchronized void clear() throws IOException {
+        Files.deleteIfExists(stateFile);
+        Files.deleteIfExists(stateFile.resolveSibling(stateFile.getFileName() + ".tmp"));
+    }
+
     private Map<String, Object> sessionJson(ScanSession session) {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("createdAt", session.createdAt());

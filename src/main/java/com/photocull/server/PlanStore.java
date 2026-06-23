@@ -6,8 +6,10 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /** Durable storage for immutable plans and their resumable apply operations. */
 final class PlanStore {
@@ -47,6 +49,13 @@ final class PlanStore {
 
     synchronized void clearActive() throws IOException {
         Files.deleteIfExists(activePlanFile);
+    }
+
+    /** Removes all locally saved plans and resumable apply-operation checkpoints. */
+    synchronized void clear() throws IOException {
+        Files.deleteIfExists(activePlanFile);
+        deleteDirectory(plansDirectory);
+        deleteDirectory(operationsDirectory);
     }
 
     synchronized PlanApplyOperation loadOrCreateOperation(ImmutableTagPlan plan) throws IOException {
@@ -98,6 +107,17 @@ final class PlanStore {
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException ignored) {
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void deleteDirectory(Path directory) throws IOException {
+        if (!Files.exists(directory)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(directory)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
         }
     }
 
