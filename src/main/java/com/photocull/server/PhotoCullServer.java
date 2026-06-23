@@ -1,6 +1,7 @@
 package com.photocull.server;
 
 import com.photocull.immich.ImmichConfig;
+import com.photocull.immich.ImmichPermissionReport;
 import com.photocull.immich.ImmichTagApplyResult;
 import com.photocull.immich.ImmichUser;
 import com.photocull.immich.ImmichWorkflow;
@@ -46,6 +47,7 @@ public final class PhotoCullServer {
     private volatile ScanJob scanJob;
     private volatile ImmutableTagPlan activePlan;
     private volatile PlanApplyOperation activeOperation;
+    private volatile ImmichPermissionReport permissionReport;
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService persistenceExecutor = Executors.newSingleThreadScheduledExecutor();
     private final Object persistenceLock = new Object();
@@ -92,6 +94,7 @@ public final class PhotoCullServer {
         server.createContext("/api/immich/scan", this::handleImmichScan);
         server.createContext("/api/immich/scan/status", this::handleImmichScanStatus);
         server.createContext("/api/immich/thumbnail", this::handleImmichThumbnail);
+        server.createContext("/api/immich/permissions", this::handleImmichPermissions);
         server.createContext("/api/immich/apply-tags", this::handleImmichApplyTags);
         int requestThreads = Math.max(4, Math.min(16, Runtime.getRuntime().availableProcessors()));
         server.setExecutor(Executors.newFixedThreadPool(requestThreads));
@@ -251,6 +254,7 @@ public final class PhotoCullServer {
                 }
                 session = null;
                 scanJob = null;
+                permissionReport = null;
                 activePlan = null;
                 activeOperation = null;
                 synchronized (persistenceLock) {
@@ -389,6 +393,7 @@ public final class PhotoCullServer {
                 throw new IllegalArgumentException("Auto-reject must be lower than auto-accept.");
             }
             invalidateActivePlan();
+            permissionReport = null;
             ScanJob job = new ScanJob(this::schedulePersistState);
             scanJob = job;
             schedulePersistState();
@@ -492,6 +497,31 @@ public final class PhotoCullServer {
         }
     }
 
+    private void handleImmichPermissions(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (session == null) {
+            send(exchange, 409, "application/json", error("Run a scan before testing Immich API-key permissions."));
+            return;
+        }
+        try {
+            synchronized (applyLock) {
+                if (tagApplicationInProgress) {
+                    throw new IllegalStateException("Wait for the approved plan application to finish before testing permissions.");
+                }
+                permissionReport = immichWorkflow.checkPermissions(session);
+            }
+            sendJson(exchange, Json.object(Map.of("permissions", permissionRows(permissionReport))));
+        } catch (Exception ex) {
+            send(exchange, 400, "application/json", error(ex.getMessage()));
+        }
+    }
+
     private void handleImmichApplyTags(HttpExchange exchange) throws IOException {
         if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
             send(exchange, 405, "application/json", error("Method not allowed"));
@@ -564,6 +594,9 @@ public final class PhotoCullServer {
         values.put("port", port);
         values.put("hasSession", session != null);
         values.put("immich", immichStatus());
+        if (permissionReport != null) {
+            values.put("permissions", permissionRows(permissionReport));
+        }
         values.put("accessProtected", accessProtected());
         if (scanJob != null) {
             values.put("scanJob", scanJob.json());
@@ -758,6 +791,8 @@ public final class PhotoCullServer {
         row.put("matchedFinalPath", item.matchedPath());
         row.put("score", item.score());
         row.put("basis", item.basis());
+        row.put("album", item.album());
+        row.put("plannedFileName", item.plannedFileName());
         return row;
     }
 
@@ -770,6 +805,8 @@ public final class PhotoCullServer {
         row.put("matchedRawPath", item.matchedPath());
         row.put("score", item.score());
         row.put("basis", item.basis());
+        row.put("album", item.album());
+        row.put("plannedFileName", item.plannedFileName());
         return row;
     }
 
@@ -835,6 +872,24 @@ public final class PhotoCullServer {
                 && plan.fingerprint().equals(operation.planFingerprint())) {
             values.put("operation", operation.summary());
         }
+        return values;
+    }
+
+    private Map<String, Object> permissionRows(ImmichPermissionReport report) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("checkedAt", report.checkedAt());
+        values.put("raw", permissionAccountRows(report.raw()));
+        values.put("final", permissionAccountRows(report.finalAccount()));
+        return values;
+    }
+
+    private Map<String, Object> permissionAccountRows(ImmichPermissionReport.Account account) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("label", account.label());
+        values.put("checks", account.checks().stream().map(check -> Map.of(
+                "capability", check.capability(),
+                "state", check.state().name(),
+                "detail", check.detail())).toList());
         return values;
     }
 

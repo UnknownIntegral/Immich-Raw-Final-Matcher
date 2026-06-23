@@ -3,6 +3,8 @@ package com.photocull.immich;
 import com.photocull.matcher.PhotoFile;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
 import java.util.Map;
@@ -101,7 +103,14 @@ public record ImmichAsset(
         try {
             return Instant.parse(value.toString());
         } catch (DateTimeParseException ignored) {
-            return null;
+            // Immich localDateTime can be a timezone-free ISO local timestamp.
+            // Represent it at UTC internally so its calendar date is preserved
+            // for matching and date-only filename planning.
+            try {
+                return LocalDateTime.parse(value.toString()).toInstant(ZoneOffset.UTC);
+            } catch (DateTimeParseException alsoIgnored) {
+                return null;
+            }
         }
     }
 

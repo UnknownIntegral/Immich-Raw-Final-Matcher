@@ -69,7 +69,7 @@ public final class DryRunManifestWriter {
         Files.createDirectories(target.getParent());
         Path temporary = target.resolveSibling(target.getFileName() + ".tmp");
         try (BufferedWriter writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
-            writer.write("plan_id,plan_fingerprint,account,decision,tag,asset_id,path,matched_asset_id,matched_path,score,basis");
+            writer.write("plan_id,plan_fingerprint,account,decision,tag,album,asset_id,path,planned_file_name,matched_asset_id,matched_path,score,basis");
             writer.newLine();
             for (ImmutableTagPlan.PlanItem item : plan.items()) {
                 writer.write(csv(plan.id()));
@@ -82,9 +82,13 @@ public final class DryRunManifestWriter {
                 writer.write(',');
                 writer.write(csv(item.tag()));
                 writer.write(',');
+                writer.write(csv(item.album()));
+                writer.write(',');
                 writer.write(csv(item.assetId()));
                 writer.write(',');
                 writer.write(csv(item.path()));
+                writer.write(',');
+                writer.write(csv(item.plannedFileName()));
                 writer.write(',');
                 writer.write(csv(item.matchedAssetId() == null ? "" : item.matchedAssetId()));
                 writer.write(',');

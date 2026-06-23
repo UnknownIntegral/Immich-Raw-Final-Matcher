@@ -81,7 +81,9 @@ public record PhotoFile(
         if (dot < 0 || dot == fileName.length() - 1) {
             return "";
         }
-        return fileName.substring(dot + 1).toLowerCase(Locale.ROOT);
+        // Keep the original extension spelling for planned display names.
+        // Extension matching is performed by ImmichAsset before this record is created.
+        return fileName.substring(dot + 1);
     }
 
     private static String stem(String fileName) {

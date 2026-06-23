@@ -125,6 +125,57 @@ public final class ImmichClient implements ImmichApi {
         return updateTagAssets("DELETE", tagId, assetIds);
     }
 
+    @Override
+    public List<ImmichAlbum> albums() throws IOException, InterruptedException {
+        Object parsed = Json.parse(send("GET", "/albums", null));
+        List<ImmichAlbum> albums = new ArrayList<>();
+        for (Object item : array(parsed)) {
+            albums.add(ImmichAlbum.fromJson(object(item)));
+        }
+        return albums;
+    }
+
+    @Override
+    public ImmichAlbum ensureAlbum(String name) throws IOException, InterruptedException {
+        for (ImmichAlbum album : albums()) {
+            if (album.name().equalsIgnoreCase(name)) {
+                return album;
+            }
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("albumName", name);
+        try {
+            return ImmichAlbum.fromJson(Json.parseObject(send("POST", "/albums", Json.object(body))));
+        } catch (IOException conflictOrFailure) {
+            for (ImmichAlbum album : albums()) {
+                if (album.name().equalsIgnoreCase(name)) {
+                    return album;
+                }
+            }
+            throw conflictOrFailure;
+        }
+    }
+
+    @Override
+    public int addAssetsToAlbum(String albumId, List<String> assetIds) throws IOException, InterruptedException {
+        return updateAlbumAssets("PUT", albumId, assetIds);
+    }
+
+    @Override
+    public int removeAssetsFromAlbum(String albumId, List<String> assetIds) throws IOException, InterruptedException {
+        return updateAlbumAssets("DELETE", albumId, assetIds);
+    }
+
+    @Override
+    public void deleteAlbum(String albumId) throws IOException, InterruptedException {
+        send("DELETE", "/albums/" + segment(albumId), null);
+    }
+
+    @Override
+    public void deleteTag(String tagId) throws IOException, InterruptedException {
+        send("DELETE", "/tags/" + segment(tagId), null);
+    }
+
     private int updateTagAssets(String method, String tagId, List<String> assetIds) throws IOException, InterruptedException {
         if (assetIds.isEmpty()) {
             return 0;
@@ -149,6 +200,30 @@ public final class ImmichClient implements ImmichApi {
         return tagged;
     }
 
+    private int updateAlbumAssets(String method, String albumId, List<String> assetIds) throws IOException, InterruptedException {
+        if (assetIds.isEmpty()) {
+            return 0;
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ids", assetIds);
+        String response = send(method, "/albums/" + segment(albumId) + "/assets", Json.object(body));
+        if (response == null || response.isBlank()) {
+            return assetIds.size();
+        }
+        Object parsed = Json.parse(response);
+        if (!(parsed instanceof List<?>)) {
+            return assetIds.size();
+        }
+        int affected = 0;
+        for (Object item : array(parsed)) {
+            Map<String, Object> result = object(item);
+            if (result.isEmpty() || Boolean.TRUE.equals(result.get("success"))) {
+                affected++;
+            }
+        }
+        return affected;
+    }
+
     @Override
     public byte[] thumbnail(String assetId) throws IOException, InterruptedException {
         return sendBytes("GET", "/assets/" + segment(assetId) + "/thumbnail");
@@ -161,12 +236,12 @@ public final class ImmichClient implements ImmichApi {
         try {
             uri = URI.create(target);
         } catch (IllegalArgumentException ex) {
-            throw requestFailure(method, path, target, ex);
+            throw requestFailure(method, path, target, ex, 1);
         }
 
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                 .version(HttpClient.Version.HTTP_1_1)
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(config.requestTimeoutSeconds()))
                 .header("Accept", "application/json")
                 .header("x-api-key", apiKey);
 
@@ -177,21 +252,36 @@ public final class ImmichClient implements ImmichApi {
             request.method(method, HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         }
 
-        HttpResponse<String> response;
-        try {
-            response = http.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        } catch (IOException ex) {
-            throw requestFailure(method, path, target, ex);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw requestFailure(method, path, target, ex);
+        HttpRequest builtRequest = request.build();
+        int attempts = retryAttemptsFor(method);
+        IOException lastFailure = null;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                HttpResponse<String> response = http.send(builtRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                int status = response.statusCode();
+                if (status >= 200 && status < 300) {
+                    return response.body();
+                }
+                if (isTransientStatus(status) && attempt < attempts) {
+                    waitBeforeRetry(attempt);
+                    continue;
+                }
+                throw httpFailure(method, path, target, status, response.body(), attempt);
+            } catch (IOException ex) {
+                if (ex instanceof HttpResponseFailure) {
+                    throw ex;
+                }
+                lastFailure = ex;
+                if (attempt < attempts) {
+                    waitBeforeRetry(attempt);
+                    continue;
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw requestFailure(method, path, target, ex, attempt);
+            }
         }
-        int status = response.statusCode();
-        if (status < 200 || status >= 300) {
-            throw new IOException("Immich API " + method + " " + path + " (" + target + ") failed with HTTP "
-                    + status + ": " + response.body());
-        }
-        return response.body();
+        throw requestFailure(method, path, target, lastFailure, attempts);
     }
 
     private byte[] sendBytes(String method, String path) throws IOException, InterruptedException {
@@ -201,38 +291,83 @@ public final class ImmichClient implements ImmichApi {
         try {
             uri = URI.create(target);
         } catch (IllegalArgumentException ex) {
-            throw requestFailure(method, path, target, ex);
+            throw requestFailure(method, path, target, ex, 1);
         }
         HttpRequest request = HttpRequest.newBuilder(uri)
                 .version(HttpClient.Version.HTTP_1_1)
-                .timeout(Duration.ofSeconds(30))
+                .timeout(Duration.ofSeconds(config.requestTimeoutSeconds()))
                 .header("Accept", "image/*")
                 .header("x-api-key", apiKey)
                 .GET()
                 .build();
-        HttpResponse<byte[]> response;
-        try {
-            response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
-        } catch (IOException ex) {
-            throw requestFailure(method, path, target, ex);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw requestFailure(method, path, target, ex);
+        int attempts = retryAttemptsFor(method);
+        IOException lastFailure = null;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                int status = response.statusCode();
+                if (status >= 200 && status < 300) {
+                    return response.body();
+                }
+                if (isTransientStatus(status) && attempt < attempts) {
+                    waitBeforeRetry(attempt);
+                    continue;
+                }
+                throw httpFailure(method, path, target, status, "", attempt);
+            } catch (IOException ex) {
+                if (ex instanceof HttpResponseFailure) {
+                    throw ex;
+                }
+                lastFailure = ex;
+                if (attempt < attempts) {
+                    waitBeforeRetry(attempt);
+                    continue;
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw requestFailure(method, path, target, ex, attempt);
+            }
         }
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Immich API " + method + " " + path + " (" + target + ") failed with HTTP "
-                    + response.statusCode());
-        }
-        return response.body();
+        throw requestFailure(method, path, target, lastFailure, attempts);
     }
 
-    private IOException requestFailure(String method, String path, String target, Exception ex) {
+    private int retryAttemptsFor(String method) {
+        return isIdempotent(method) ? config.requestRetryAttempts() : 1;
+    }
+
+    private boolean isIdempotent(String method) {
+        return "GET".equals(method) || "PUT".equals(method) || "DELETE".equals(method);
+    }
+
+    private boolean isTransientStatus(int status) {
+        return status == 429 || status >= 500;
+    }
+
+    private void waitBeforeRetry(int completedAttempt) throws InterruptedException {
+        long delayMillis = Math.min(10_000L, 2_000L << (completedAttempt - 1));
+        Thread.sleep(delayMillis);
+    }
+
+    private IOException httpFailure(String method, String path, String target, int status, String body, int attempts) {
+        String suffix = attempts > 1 ? " after " + attempts + " attempts" : "";
+        return new HttpResponseFailure("Immich API " + method + " " + path + " (" + target + ") failed with HTTP "
+                + status + suffix + (body == null || body.isBlank() ? "" : ": " + body));
+    }
+
+    private static final class HttpResponseFailure extends IOException {
+        private HttpResponseFailure(String message) {
+            super(message);
+        }
+    }
+
+    private IOException requestFailure(String method, String path, String target, Exception ex, int attempts) {
         String message = ex.getMessage();
         if (message == null || message.isBlank()) {
             message = "(no message)";
         }
-        return new IOException("Immich API " + method + " " + path + " (" + target
-                + ") failed before receiving a response: " + ex.getClass().getName() + ": " + message, ex);
+        String suffix = attempts > 1 ? " after " + attempts + " attempts" : "";
+        return new IOException("Immich API " + method + " " + path + " (" + target + ") failed" + suffix
+                + " before receiving a response: " + ex.getClass().getName() + ": " + message, ex);
     }
 
     private void requireApiConfigured() {

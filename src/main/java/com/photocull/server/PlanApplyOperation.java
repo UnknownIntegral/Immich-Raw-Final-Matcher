@@ -17,6 +17,7 @@ public final class PlanApplyOperation {
     public enum State { RUNNING, COMPLETE, FAILED }
     public enum StepState { PENDING, RUNNING, COMPLETE, FAILED }
     public enum Mutation { ADD, REMOVE }
+    public enum Resource { TAG, ALBUM }
 
     private final String id;
     private final String planId;
@@ -59,7 +60,7 @@ public final class PlanApplyOperation {
                 .filter(id -> !duplicateIds.contains(id))
                 .toList();
 
-        List<Step> steps = List.of(
+        List<Step> steps = new ArrayList<>(List.of(
                 Step.pending("remove-raw-unused-from-keepers", ImmutableTagPlan.RAW, Mutation.REMOVE,
                         tag(tags, ImmutableTagPlan.UNUSED), keepers),
                 Step.pending("remove-raw-keeper-from-unused", ImmutableTagPlan.RAW, Mutation.REMOVE,
@@ -80,7 +81,12 @@ public final class PlanApplyOperation {
                         tag(tags, ImmutableTagPlan.NO_RAW), noRaw),
                 Step.pending("add-final-duplicate", ImmutableTagPlan.FINAL, Mutation.ADD,
                         tag(tags, ImmutableTagPlan.DUPLICATE), duplicates)
-        );
+        ));
+        addAlbumStep(steps, "add-raw-keeper-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.KEEPER, keepers);
+        addAlbumStep(steps, "add-raw-unused-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.UNUSED, unused);
+        addAlbumStep(steps, "add-final-raw-found-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.RAW_FOUND, rawFound);
+        addAlbumStep(steps, "add-final-no-raw-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.NO_RAW, noRaw);
+        addAlbumStep(steps, "add-final-duplicate-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.DUPLICATE, duplicates);
         Instant now = Instant.now();
         return new PlanApplyOperation("apply-" + plan.id(), plan.id(), plan.fingerprint(), now, now,
                 State.RUNNING, null, steps);
@@ -106,6 +112,12 @@ public final class PlanApplyOperation {
             state = State.COMPLETE;
             error = null;
         }
+        touch();
+    }
+
+    /** Records fully acknowledged batches so a retry resumes after them. */
+    public synchronized void progress(Step step, int affectedAssets) {
+        step.progress(affectedAssets);
         touch();
     }
 
@@ -206,6 +218,20 @@ public final class PlanApplyOperation {
         return value;
     }
 
+    private static void addAlbumStep(
+            List<Step> steps,
+            String id,
+            String account,
+            ImmutableTagPlan plan,
+            String decision,
+            List<String> assetIds
+    ) {
+        String album = plan.decisionAlbums().get(decision);
+        if (album != null && !album.isBlank() && !assetIds.isEmpty()) {
+            steps.add(Step.pendingAlbum(id, account, Mutation.ADD, album, assetIds));
+        }
+    }
+
     private synchronized void touch() {
         updatedAt = Instant.now();
     }
@@ -247,6 +273,7 @@ public final class PlanApplyOperation {
     public static final class Step {
         private final String id;
         private final String account;
+        private final Resource resource;
         private final Mutation mutation;
         private final String tag;
         private final List<String> assetIds;
@@ -254,10 +281,11 @@ public final class PlanApplyOperation {
         private int affectedAssets;
         private String error;
 
-        private Step(String id, String account, Mutation mutation, String tag, List<String> assetIds,
+        private Step(String id, String account, Resource resource, Mutation mutation, String tag, List<String> assetIds,
                      StepState state, int affectedAssets, String error) {
             this.id = id;
             this.account = account;
+            this.resource = resource;
             this.mutation = mutation;
             this.tag = tag;
             this.assetIds = List.copyOf(assetIds);
@@ -267,11 +295,16 @@ public final class PlanApplyOperation {
         }
 
         private static Step pending(String id, String account, Mutation mutation, String tag, List<String> assetIds) {
-            return new Step(id, account, mutation, tag, assetIds, StepState.PENDING, 0, null);
+            return new Step(id, account, Resource.TAG, mutation, tag, assetIds, StepState.PENDING, 0, null);
+        }
+
+        private static Step pendingAlbum(String id, String account, Mutation mutation, String album, List<String> assetIds) {
+            return new Step(id, account, Resource.ALBUM, mutation, album, assetIds, StepState.PENDING, 0, null);
         }
 
         public String id() { return id; }
         public String account() { return account; }
+        public Resource resource() { return resource; }
         public Mutation mutation() { return mutation; }
         public String tag() { return tag; }
         public List<String> assetIds() { return assetIds; }
@@ -290,6 +323,13 @@ public final class PlanApplyOperation {
             error = null;
         }
 
+        private void progress(int count) {
+            if (count < affectedAssets || count > assetIds.size()) {
+                throw new IllegalArgumentException("Invalid acknowledged asset count for apply step " + id + ".");
+            }
+            affectedAssets = count;
+        }
+
         private void fail(String message) {
             state = StepState.FAILED;
             error = message;
@@ -299,6 +339,7 @@ public final class PlanApplyOperation {
             Map<String, Object> values = new LinkedHashMap<>();
             values.put("id", id);
             values.put("account", account);
+            values.put("resource", resource.name());
             values.put("mutation", mutation.name());
             values.put("tag", tag);
             values.put("assetIds", assetIds);
@@ -311,6 +352,7 @@ public final class PlanApplyOperation {
         private static Step fromJson(Map<String, Object> values) {
             List<String> ids = array(values.get("assetIds")).stream().map(PlanApplyOperation::string).toList();
             return new Step(string(values.get("id")), string(values.get("account")),
+                    PlanApplyOperation.state(values.get("resource"), Resource.TAG),
                     PlanApplyOperation.state(values.get("mutation"), Mutation.ADD), string(values.get("tag")), ids,
                     PlanApplyOperation.state(values.get("state"), StepState.FAILED), number(values.get("affectedAssets")),
                     nullable(values.get("error")));

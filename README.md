@@ -33,6 +33,9 @@ Ready now:
 - Immich image asset discovery by RAW owner ID and edited-image owner ID.
 - Match/tag plans that preserve Immich asset IDs.
 - Immich tag lookup/creation and tag application for `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used`.
+- Configured Immich Album membership for each app-managed decision state; Album actions are frozen and resumed with the same approved plan as tag actions.
+- Deterministic date-and-sequence filename plans such as `2026-06-22-000001.jpg` / `2026-06-22-000001.cr3`, including unmatched finals, recorded in the immutable plan and manifest.
+- Separate RAW-key and final-key permission cards that test asset read, tags, Albums, and cleanup through temporary app-scoped probes without exposing either key.
 - Optional shared access token for API actions with `PCA_ACCESS_TOKEN`.
 - Dockerfile and starter Unraid template.
 - GitHub Actions publishing of a Linux amd64 image to `ghcr.io/unknownintegral/photo-culling-assistant:latest`.
@@ -87,6 +90,24 @@ The configured decision tags are treated as app-managed states:
 
 Use dedicated tags for this app. Do not configure these names to overlap with unrelated manual tagging workflows, because the app will reconcile assignments for scanned assets.
 
+## Albums, filename plans, and API permissions
+
+Each approved plan also adds its assets to these default Immich Albums. Override the names with environment variables if desired:
+
+- `PCA_KEEPER_ALBUM` (default `PCA - Keeper RAWs`)
+- `PCA_UNUSED_ALBUM` (default `PCA - Unused RAWs`)
+- `PCA_RAW_FOUND_ALBUM` (default `PCA - Finished`)
+- `PCA_NO_RAW_ALBUM` (default `PCA - No RAW`)
+- `PCA_DUPLICATE_ALBUM` (default `PCA - Duplicates`)
+
+Album membership is additive: the app does not remove photos from personal Albums.
+
+The plan assigns every final image a six-digit sequence per date (`YYYY-MM-DD-000001.ext`). A matched RAW shares the same basename with its native extension (for example, `2026-06-22-000001.jpg` and `2026-06-22-000001.CR3`); unmatched RAWs receive a free sequence for their own date. The plan and CSV manifest make the intended downloaded-library names reviewable.
+
+**Important:** Immich's current public API exposes `originalFileName` for reading but not for safe updating. Therefore this app does not rename the displayed `IMG_2535` value, its database row, or the underlying Immich-managed file. The permission panel marks displayed-filename update as **Unsupported** rather than risking the database or storage paths. If Immich later adds an official filename-update API, the existing immutable filename plan can become its input safely.
+
+After a scan, select **Test both API keys** to run each key's independent capability checks. The write checks temporarily create and remove an app-scoped tag and Album on one asset for the corresponding account. API-key values are never sent to the browser or written to status output.
+
 ## Decision History and Alternate RAWs
 
 The **Decision history** tab shows the newest durable events first and can be filtered by a final or RAW Immich asset ID. Events are appended to `/config/history/decision-events.jsonl` and flushed to disk on each write. This file is sensitive: it includes asset IDs, paths, match scores, and review reasoning, so keep the `/config` share private.
@@ -134,6 +155,18 @@ This app requires two account-specific keys and does not read `IMMICH_API_KEY`.
 - `FINAL_IMMICH_API_KEY`: scans final assets for `FINAL_USER_ID`, fetches final thumbnails, and applies final-side `RAW Found` / `No RAW` / `duplicate` tags.
 
 `/api/status` reports whether both required keys are configured, but never returns secret values.
+
+## Immich Reliability Controls
+
+Tag and Album mutations use batches of 100 assets by default, wait up to 180 seconds for each Immich response, and retry safe GET, PUT, and DELETE requests up to three times after a timeout, rate-limit response, or server error. Every fully acknowledged batch is checkpointed, so retrying a failed apply resumes after the completed batches.
+
+Advanced Unraid settings can override these defaults:
+
+- `PCA_IMMICH_REQUEST_TIMEOUT_SECONDS` — response timeout, 10–600 seconds (default `180`).
+- `PCA_IMMICH_MUTATION_BATCH_SIZE` — assets per tag or Album mutation, 1–500 (default `100`).
+- `PCA_IMMICH_REQUEST_RETRY_ATTEMPTS` — total safe-request attempts, 1–5 (default `3`).
+
+POST requests are deliberately not retried automatically because creation requests are not generally idempotent.
 
 When upgrading an existing Unraid container, remove the obsolete `IMMICH_API_KEY` variable from its template. The application ignores it; only the two account-specific variables are used.
 

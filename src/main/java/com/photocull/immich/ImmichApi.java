@@ -27,5 +27,17 @@ public interface ImmichApi {
 
     int untagAssets(String tagId, List<String> assetIds) throws IOException, InterruptedException;
 
+    List<ImmichAlbum> albums() throws IOException, InterruptedException;
+
+    ImmichAlbum ensureAlbum(String name) throws IOException, InterruptedException;
+
+    int addAssetsToAlbum(String albumId, List<String> assetIds) throws IOException, InterruptedException;
+
+    int removeAssetsFromAlbum(String albumId, List<String> assetIds) throws IOException, InterruptedException;
+
+    void deleteAlbum(String albumId) throws IOException, InterruptedException;
+
+    void deleteTag(String tagId) throws IOException, InterruptedException;
+
     byte[] thumbnail(String assetId) throws IOException, InterruptedException;
 }

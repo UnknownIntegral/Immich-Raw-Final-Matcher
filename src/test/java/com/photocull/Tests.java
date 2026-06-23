@@ -6,8 +6,10 @@ import com.photocull.matcher.MatchResult;
 import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.PhotoFile;
 import com.photocull.immich.ImmichApi;
+import com.photocull.immich.ImmichAlbum;
 import com.photocull.immich.ImmichAsset;
 import com.photocull.immich.ImmichConfig;
+import com.photocull.immich.ImmichPermissionReport;
 import com.photocull.immich.ImmichTag;
 import com.photocull.immich.ImmichUser;
 import com.photocull.immich.ImmichWorkflow;
@@ -38,6 +40,7 @@ public final class Tests {
     public static void main(String[] args) throws Exception {
         parsesJsonObjects();
         normalizesImmichApiUrls();
+        usesResilientImmichMutationDefaults();
         buildsImmichPhotoFiles();
         createsAssetIdTagPlans();
         createsFinalAccountTagPlans();
@@ -57,6 +60,8 @@ public final class Tests {
         requiresAccountSpecificImmichApiKeys();
         scansRawAndFinalAssetsWithSeparateClients();
         appliesTagsWithSideSpecificClients();
+        plansDateOnlySharedBasenamesAndAlbums();
+        testsPermissionsForEachAccountSpecificKey();
         freezesExactPlanBeforeApplying();
         reconcilesStaleDecisionTags();
         omitsApiKeysFromStatusJson();
@@ -79,6 +84,13 @@ public final class Tests {
         assertEquals("http://10.10.10.10:8084/api", apiRoot.apiUrl(), "existing Immich API prefix is preserved");
     }
 
+    private static void usesResilientImmichMutationDefaults() {
+        ImmichConfig config = config("raw-key", "final-key");
+        assertEquals(180, config.requestTimeoutSeconds(), "Immich request timeout default");
+        assertEquals(100, config.mutationBatchSize(), "Immich mutation batch size default");
+        assertEquals(3, config.requestRetryAttempts(), "Immich retry attempt default");
+    }
+
     private static void buildsImmichPhotoFiles() {
         PhotoFile raw = PhotoFile.fromImmichAsset(
                 "raw-asset",
@@ -93,7 +105,7 @@ public final class Tests {
         );
         assertEquals("raw-asset", raw.immichAssetId(), "asset id");
         assertEquals("raw-owner", raw.immichOwnerId(), "owner id");
-        assertEquals("cr3", raw.extension(), "extension");
+        assertEquals("CR3", raw.extension(), "extension");
         assertEquals("img1234", raw.normalizedStem(), "normalized stem");
         assertEquals("1234", raw.trailingNumber(), "trailing number");
     }
@@ -576,6 +588,58 @@ public final class Tests {
         assertTrue(finalApi.taggedAssetIds.contains("final-matched"), "final client tags matched final");
         assertTrue(finalApi.taggedAssetIds.contains("final-unmatched"), "final client tags unmatched final");
         assertTrue(finalApi.taggedAssetIds.contains("final-small"), "final client tags duplicate final");
+        assertTrue(rawApi.albumAssetIds.contains("raw-keeper"), "raw client adds Keeper to Album");
+        assertTrue(finalApi.albumAssetIds.contains("final-matched"), "final client adds finished image to Album");
+    }
+
+    private static void plansDateOnlySharedBasenamesAndAlbums() {
+        PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-user", "IMG_0001.CR3", "/raw/IMG_0001.CR3", 1,
+                Instant.parse("2024-06-22T16:00:00Z"), Instant.parse("2024-06-22T16:00:00Z"), "", "");
+        PhotoFile matchedFinal = PhotoFile.fromImmichAsset("final-1", "final-user", "IMG_0001.jpg", "/final/IMG_0001.jpg", 1,
+                Instant.parse("2024-06-22T16:01:00Z"), Instant.parse("2024-06-22T16:01:00Z"), "", "");
+        PhotoFile unmatchedFinal = PhotoFile.fromImmichAsset("final-2", "final-user", "EXPORT.jpg", "/final/EXPORT.jpg", 1,
+                Instant.parse("2024-06-22T16:02:00Z"), Instant.parse("2024-06-22T16:02:00Z"), "", "");
+        ScanSession session = new ScanSession(List.of(raw), List.of(matchedFinal, unmatchedFinal), List.of(
+                new MatchResult(matchedFinal, raw, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null),
+                new MatchResult(unmatchedFinal, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null)), 90, 50);
+
+        ImmutableTagPlan plan = ImmutableTagPlan.fromSession(session, config("raw-key", "final-key"));
+        ImmutableTagPlan.PlanItem rawItem = plan.rawItems().get(0);
+        ImmutableTagPlan.PlanItem firstFinal = plan.finalItems().stream()
+                .filter(item -> item.assetId().equals("final-1")).findFirst().orElseThrow();
+        ImmutableTagPlan.PlanItem secondFinal = plan.finalItems().stream()
+                .filter(item -> item.assetId().equals("final-2")).findFirst().orElseThrow();
+
+        assertEquals("2024-06-22-000001.CR3", rawItem.plannedFileName(), "raw planned name");
+        assertEquals("2024-06-22-000001.jpg", firstFinal.plannedFileName(), "matched final planned name");
+        assertEquals("2024-06-22-000002.jpg", secondFinal.plannedFileName(), "unmatched final planned name");
+        assertEquals("PCA - Keeper RAWs", rawItem.album(), "Keeper Album");
+        assertEquals("PCA - Finished", firstFinal.album(), "finished Album");
+        assertTrue(PlanApplyOperation.create(plan).steps().stream()
+                        .anyMatch(step -> step.resource() == PlanApplyOperation.Resource.ALBUM),
+                "plan includes Album actions");
+    }
+
+    private static void testsPermissionsForEachAccountSpecificKey() {
+        RecordingImmichApi rawApi = new RecordingImmichApi();
+        RecordingImmichApi finalApi = new RecordingImmichApi();
+        PhotoFile raw = photo("raw-permission", "raw-user", "IMG_0001.CR3");
+        PhotoFile finished = photo("final-permission", "final-user", "IMG_0001.jpg");
+        ScanSession session = new ScanSession(List.of(raw), List.of(finished), List.of(
+                new MatchResult(finished, raw, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null)), 90, 50);
+        ImmichPermissionReport report = new ImmichWorkflow(config("raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi)
+                .checkPermissions(session);
+
+        assertEquals("RAW API key", report.raw().label(), "raw permission card");
+        assertEquals("Final API key", report.finalAccount().label(), "final permission card");
+        assertTrue(report.raw().checks().stream().anyMatch(check -> check.capability().equals("Tag write")
+                        && check.state() == ImmichPermissionReport.State.PASS), "raw key tag write permission");
+        assertTrue(report.finalAccount().checks().stream().anyMatch(check -> check.capability().equals("Album write")
+                        && check.state() == ImmichPermissionReport.State.PASS), "final key Album write permission");
+        assertTrue(report.raw().checks().stream().anyMatch(check -> check.capability().equals("Displayed filename update")
+                        && check.state() == ImmichPermissionReport.State.UNSUPPORTED), "filename update safely unavailable");
+        assertTrue(rawApi.taggedAssetIds.contains("raw-permission"), "raw API key runs its own write probe");
+        assertTrue(finalApi.taggedAssetIds.contains("final-permission"), "final API key runs its own write probe");
     }
 
     private static void freezesExactPlanBeforeApplying() {
@@ -763,7 +827,9 @@ public final class Tests {
         private final List<String> ensuredTags = new ArrayList<>();
         private final List<String> taggedAssetIds = new ArrayList<>();
         private final List<String> untaggedAssetIds = new ArrayList<>();
+        private final List<String> albumAssetIds = new ArrayList<>();
         private final List<ImmichTag> visibleTags = new ArrayList<>();
+        private final List<ImmichAlbum> visibleAlbums = new ArrayList<>();
 
         private RecordingImmichApi() {
             this(List.of());
@@ -814,6 +880,44 @@ public final class Tests {
         public int untagAssets(String tagId, List<String> assetIds) {
             untaggedAssetIds.addAll(assetIds);
             return assetIds.size();
+        }
+
+        @Override
+        public List<ImmichAlbum> albums() {
+            return List.copyOf(visibleAlbums);
+        }
+
+        @Override
+        public ImmichAlbum ensureAlbum(String name) {
+            ImmichAlbum existing = visibleAlbums.stream().filter(album -> album.name().equalsIgnoreCase(name)).findFirst().orElse(null);
+            if (existing != null) {
+                return existing;
+            }
+            ImmichAlbum created = new ImmichAlbum("album-" + name, name);
+            visibleAlbums.add(created);
+            return created;
+        }
+
+        @Override
+        public int addAssetsToAlbum(String albumId, List<String> assetIds) {
+            albumAssetIds.addAll(assetIds);
+            return assetIds.size();
+        }
+
+        @Override
+        public int removeAssetsFromAlbum(String albumId, List<String> assetIds) {
+            albumAssetIds.removeAll(assetIds);
+            return assetIds.size();
+        }
+
+        @Override
+        public void deleteAlbum(String albumId) {
+            visibleAlbums.removeIf(album -> album.id().equals(albumId));
+        }
+
+        @Override
+        public void deleteTag(String tagId) {
+            visibleTags.removeIf(tag -> tag.id().equals(tagId));
         }
 
         @Override
