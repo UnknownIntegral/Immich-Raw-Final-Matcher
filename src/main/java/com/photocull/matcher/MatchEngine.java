@@ -17,6 +17,8 @@ import java.util.function.Consumer;
 public final class MatchEngine {
     private static final int AMBIGUOUS_RAW_MATCH_MARGIN = 8;
     private static final int AMBIGUOUS_RAW_MATCH_MIN_SCORE = 70;
+    private static final Duration CONFLICTING_CAPTURE_TIME_WINDOW = Duration.ofMinutes(5);
+    private static final int CONFLICTING_CAPTURE_TIME_MAX_SCORE = 49;
 
     public List<MatchResult> match(
             List<PhotoFile> rawFiles,
@@ -167,6 +169,13 @@ public final class MatchEngine {
         return first.captureTime() != null && first.captureTime().equals(second.captureTime());
     }
 
+    private boolean hasConflictingCaptureTimes(PhotoFile finished, PhotoFile raw) {
+        return finished.captureTime() != null
+                && raw.captureTime() != null
+                && Duration.between(finished.captureTime(), raw.captureTime()).abs()
+                .compareTo(CONFLICTING_CAPTURE_TIME_WINDOW) > 0;
+    }
+
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
         List<String> reasons = new ArrayList<>();
         int nameScore = nameScore(finished, raw, reasons);
@@ -186,6 +195,13 @@ public final class MatchEngine {
         }
         evidenceScore += metadataScore + folderDateScore;
         int score = Math.max(0, Math.min(100, evidenceScore));
+
+        // A filename collision is not enough to overcome contradictory capture metadata.
+        // Keep these out of the review band instead of suggesting unrelated photos.
+        if (hasConflictingCaptureTimes(finished, raw)) {
+            score = Math.min(score, CONFLICTING_CAPTURE_TIME_MAX_SCORE);
+            reasons.add("capture timestamps differ by more than 5 minutes");
+        }
 
         if (reasons.isEmpty()) {
             reasons.add("Weak filename similarity");

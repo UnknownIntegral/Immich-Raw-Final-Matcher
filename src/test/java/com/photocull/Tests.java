@@ -37,11 +37,13 @@ public final class Tests {
 
     public static void main(String[] args) throws Exception {
         parsesJsonObjects();
+        normalizesImmichApiUrls();
         buildsImmichPhotoFiles();
         createsAssetIdTagPlans();
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
+        rejectsFilenameMatchesWithConflictingCaptureTimes();
         autoAcceptsUniqueExactTimestamp();
         autoAcceptsExactTimestampWithOtherCandidates();
         updatesCachedSessionMetricsDuringReview();
@@ -68,6 +70,13 @@ public final class Tests {
         assertEquals("a1", first.get("id"), "json id");
         assertEquals(Boolean.TRUE, first.get("ok"), "json bool");
         assertEquals(null, assets.get("nextPage"), "json null");
+    }
+
+    private static void normalizesImmichApiUrls() {
+        ImmichConfig serverRoot = configForUrl("http://10.10.10.10:8084/");
+        ImmichConfig apiRoot = configForUrl("http://10.10.10.10:8084/api/");
+        assertEquals("http://10.10.10.10:8084/api", serverRoot.apiUrl(), "server root adds Immich API prefix");
+        assertEquals("http://10.10.10.10:8084/api", apiRoot.apiUrl(), "existing Immich API prefix is preserved");
     }
 
     private static void buildsImmichPhotoFiles() {
@@ -249,6 +258,21 @@ public final class Tests {
         assertEquals(1L, session.unusedCount(), "auto-rejected RAW is unused");
     }
 
+    private static void rejectsFilenameMatchesWithConflictingCaptureTimes() {
+        Instant rawTime = Instant.parse("2025-05-12T17:32:09Z");
+        Instant finalTime = Instant.parse("2024-11-29T16:39:28Z");
+        PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "IMG_0001.CR3", "/raw/upload-id.CR3", 1,
+                rawTime, rawTime, "Canon", "EOS R6m2");
+        PhotoFile finished = PhotoFile.fromImmichAsset("final-1", "final-owner", "IMG_0001.jpg", "/final/upload-id.jpg", 1,
+                finalTime, finalTime, "Canon", "EOS R6m2");
+
+        MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
+
+        assertEquals(49, match.score(), "conflicting capture metadata caps filename score");
+        assertEquals(MatchStatus.AUTO_REJECTED, match.status(), "conflicting capture metadata stays out of review");
+        assertTrue(match.reason().contains("capture timestamps differ by more than 5 minutes"), "conflict reason is visible");
+    }
+
     private static void updatesCachedSessionMetricsDuringReview() {
         PhotoFile rawFirst = photo("raw-1", "raw-owner", "IMG_0001.CR3");
         PhotoFile rawSecond = photo("raw-2", "raw-owner", "IMG_0002.CR3");
@@ -426,11 +450,11 @@ public final class Tests {
         @SuppressWarnings("unchecked")
         Map<String, Object> rawMetadata = (Map<String, Object>) row.get("rawMetadata");
 
-        assertEquals("IMG_0001.jpg", finalMetadata.get("filename"), "comparison includes final filename");
-        assertEquals("JPG", finalMetadata.get("fileType"), "comparison includes final type");
         assertEquals(timestamp, finalMetadata.get("captureTimestamp"), "comparison includes final capture time");
         assertEquals("Canon R5", rawMetadata.get("cameraType"), "comparison includes RAW camera type");
-        assertEquals(12_345L, rawMetadata.get("fileSizeBytes"), "comparison includes RAW file size");
+        assertEquals(false, finalMetadata.containsKey("filename"), "comparison excludes filename");
+        assertEquals(false, finalMetadata.containsKey("fileType"), "comparison excludes file type");
+        assertEquals(false, rawMetadata.containsKey("fileSizeBytes"), "comparison excludes file size");
     }
 
     private static void separatesExactAndPossibleDuplicates() {
@@ -650,6 +674,23 @@ public final class Tests {
                 "http://immich.local/api",
                 rawKey,
                 finalKey,
+                "raw-user",
+                "final-user",
+                "Keeper",
+                "not used",
+                "RAW Found",
+                "No RAW",
+                "duplicate",
+                1000,
+                10000
+        );
+    }
+
+    private static ImmichConfig configForUrl(String url) {
+        return new ImmichConfig(
+                url,
+                "raw-key",
+                "final-key",
                 "raw-user",
                 "final-user",
                 "Keeper",

@@ -660,13 +660,10 @@ public final class PhotoCullServer {
 
     private Map<String, Object> comparisonMetadata(PhotoFile file) {
         Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("filename", file.path().getFileName() == null ? file.path().toString() : file.path().getFileName().toString());
-        metadata.put("fileType", file.extension().isBlank() ? null : file.extension().toUpperCase());
         metadata.put("captureTimestamp", file.captureTime());
         metadata.put("cameraType", String.join(" ", List.of(file.make(), file.model()).stream()
                 .filter(value -> value != null && !value.isBlank())
                 .toList()));
-        metadata.put("fileSizeBytes", file.sizeBytes());
         metadata.put("modifiedTimestamp", file.lastModified());
         return metadata;
     }

@@ -156,7 +156,7 @@ public final class ImmichClient implements ImmichApi {
 
     private String send(String method, String path, String body) throws IOException, InterruptedException {
         requireApiConfigured();
-        String target = config.normalizedUrl() + path;
+        String target = config.apiUrl() + path;
         URI uri;
         try {
             uri = URI.create(target);
@@ -196,7 +196,7 @@ public final class ImmichClient implements ImmichApi {
 
     private byte[] sendBytes(String method, String path) throws IOException, InterruptedException {
         requireApiConfigured();
-        String target = config.normalizedUrl() + path;
+        String target = config.apiUrl() + path;
         URI uri;
         try {
             uri = URI.create(target);
@@ -237,7 +237,7 @@ public final class ImmichClient implements ImmichApi {
 
     private void requireApiConfigured() {
         List<String> missing = new ArrayList<>();
-        if (config.normalizedUrl().isBlank()) {
+        if (config.apiUrl().isBlank()) {
             missing.add("IMMICH_URL");
         }
         if (apiKey.isBlank()) {

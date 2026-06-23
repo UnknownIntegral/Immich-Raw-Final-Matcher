@@ -114,6 +114,20 @@ public record ImmichConfig(
         return value;
     }
 
+    /**
+     * Returns the Immich public API base URL. Users normally configure the
+     * server root (for example, {@code http://immich-server:2283}); Immich
+     * exposes its REST endpoints below {@code /api}. An already suffixed URL
+     * is accepted for reverse-proxy configurations.
+     */
+    public String apiUrl() {
+        String base = normalizedUrl();
+        if (base.isBlank() || base.endsWith("/api")) {
+            return base;
+        }
+        return base + "/api";
+    }
+
     private static String env(String key) {
         return System.getenv(key);
     }
