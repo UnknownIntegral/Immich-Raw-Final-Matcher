@@ -10,9 +10,12 @@ public final class ServerApp {
 
     public static void main(String[] args) throws Exception {
         int port = readPort();
-        PhotoCullServer server = new PhotoCullServer(port, AppPaths.configDir(), ImmichConfig.fromEnvironment());
+        var configDir = AppPaths.configDir();
+        AppLog.install(configDir);
+        PhotoCullServer server = new PhotoCullServer(port, configDir, ImmichConfig.fromEnvironment());
         server.start();
-        System.out.println("Photo Culling Assistant web UI running at http://localhost:" + port);
+        System.out.println("Photo Culling Assistant web UI running at http://localhost:" + port
+                + "; persistent logs are in " + configDir.resolve("logs") + " (seven-day retention).");
         new CountDownLatch(1).await();
     }
 

@@ -234,7 +234,7 @@ public final class ImmichWorkflow {
         PlanApplyOperation operation = PlanApplyOperation.create(plan);
         applyTags(plan, operation, ignored -> { });
         Path manifest = new ImmichTagManifestWriter().writeCsv(
-                session.tagPlan(config.keeperTag(), config.unusedTag()),
+                session.tagPlan(config.keeperTag(), config.unusedTag(), config.finalNotFoundTag()),
                 session.finalTagPlan(config.rawFoundTag(), config.noRawTag(), config.duplicateTag()), configDir);
         return result(plan, operation, manifest);
     }
@@ -457,11 +457,13 @@ public final class ImmichWorkflow {
         return new ImmichTagApplyResult(
                 itemCount(plan.rawItems(), ImmutableTagPlan.KEEPER),
                 itemCount(plan.rawItems(), ImmutableTagPlan.UNUSED),
+                itemCount(plan.rawItems(), ImmutableTagPlan.FINAL_NOT_FOUND),
                 itemCount(plan.finalItems(), ImmutableTagPlan.RAW_FOUND),
                 itemCount(plan.finalItems(), ImmutableTagPlan.NO_RAW),
                 itemCount(plan.finalItems(), ImmutableTagPlan.DUPLICATE),
                 operation.affectedAssets("add-raw-keeper"),
                 operation.affectedAssets("add-raw-unused"),
+                operation.affectedAssets("add-raw-final-not-found"),
                 operation.affectedAssets("add-final-raw-found"),
                 operation.affectedAssets("add-final-no-raw"),
                 operation.affectedAssets("add-final-duplicate"),

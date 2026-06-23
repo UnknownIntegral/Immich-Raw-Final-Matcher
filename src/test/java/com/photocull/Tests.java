@@ -45,6 +45,7 @@ public final class Tests {
         usesResilientImmichMutationDefaults();
         buildsImmichPhotoFiles();
         createsAssetIdTagPlans();
+        separatesUnusedAndFinalNotFoundRawTags();
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
@@ -680,10 +681,31 @@ public final class Tests {
                 "Different Keeper", "not used", "RAW Found", "No RAW", "duplicate", 1000, 10000
         )), "frozen plan rejects changed tag configuration");
         assertEquals("apply-" + plan.id(), operation.id(), "operation is deterministic for the plan");
-        assertTrue(operation.steps().stream().anyMatch(step -> step.id().equals("remove-raw-unused-from-keepers")),
-                "operation includes raw reconciliation");
+        assertTrue(operation.steps().stream().anyMatch(step -> step.id().equals("remove-raw-keeper")),
+                "operation removes app-managed raw tags before applying them");
         assertTrue(operation.steps().stream().anyMatch(step -> step.id().equals("add-final-raw-found")),
                 "operation includes final application");
+    }
+
+    private static void separatesUnusedAndFinalNotFoundRawTags() {
+        PhotoFile rawWithFinalDay = PhotoFile.fromImmichAsset(
+                "raw-unused", "raw-owner", "IMG_0002.CR3", "/raw/IMG_0002.CR3", 1,
+                Instant.parse("2024-01-01T11:00:00Z"), Instant.parse("2024-01-01T11:00:00Z"), "", "");
+        PhotoFile rawWithoutFinalDay = PhotoFile.fromImmichAsset(
+                "raw-final-not-found", "raw-owner", "IMG_0003.CR3", "/raw/IMG_0003.CR3", 1,
+                Instant.parse("2024-01-02T11:00:00Z"), Instant.parse("2024-01-02T11:00:00Z"), "", "");
+        PhotoFile finished = PhotoFile.fromImmichAsset(
+                "final-1", "final-owner", "EXPORT.jpg", "/final/EXPORT.jpg", 1,
+                Instant.parse("2024-01-01T12:00:00Z"), Instant.parse("2024-01-01T12:00:00Z"), "", "");
+        ScanSession session = new ScanSession(
+                List.of(rawWithFinalDay, rawWithoutFinalDay), List.of(finished),
+                List.of(new MatchResult(finished, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null)), 90, 50);
+
+        List<TagPlanItem> plan = session.tagPlan();
+        assertEquals("not used", plan.stream().filter(item -> item.rawAssetId().equals("raw-unused"))
+                .findFirst().orElseThrow().tag(), "RAW on a final-image date is not used");
+        assertEquals("Final not found", plan.stream().filter(item -> item.rawAssetId().equals("raw-final-not-found"))
+                .findFirst().orElseThrow().tag(), "RAW with no final-image date is Final not found");
     }
 
     private static void reconcilesStaleDecisionTags() throws IOException, InterruptedException {

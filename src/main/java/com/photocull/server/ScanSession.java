@@ -6,6 +6,8 @@ import com.photocull.matcher.PhotoFile;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -220,10 +222,14 @@ public final class ScanSession {
     }
 
     public synchronized List<TagPlanItem> tagPlan() {
-        return tagPlan("Keeper", "not used");
+        return tagPlan("Keeper", "not used", "Final not found");
     }
 
     public synchronized List<TagPlanItem> tagPlan(String keeperTag, String unusedTag) {
+        return tagPlan(keeperTag, unusedTag, "Final not found");
+    }
+
+    public synchronized List<TagPlanItem> tagPlan(String keeperTag, String unusedTag, String finalNotFoundTag) {
         Map<Path, MatchResult> keeperMatches = new HashMap<>();
         Set<Path> unresolvedRawPaths = new HashSet<>();
 
@@ -256,7 +262,12 @@ public final class ScanSession {
                         keeper.score()
                 ));
             } else if (!unresolvedRawPaths.contains(raw.path())) {
-                plan.add(new TagPlanItem(raw, unusedTag, "no accepted final image match", null, raw.immichAssetId(), null, 0));
+                boolean finalExistsOnCaptureDate = finals.stream().anyMatch(finalImage -> sameCaptureDate(raw, finalImage));
+                String tag = finalExistsOnCaptureDate ? unusedTag : finalNotFoundTag;
+                String basis = finalExistsOnCaptureDate
+                        ? "final image exists on the RAW capture date but no accepted image match"
+                        : "no final image exists on the RAW capture date";
+                plan.add(new TagPlanItem(raw, tag, basis, null, raw.immichAssetId(), null, 0));
             }
         }
 
@@ -427,7 +438,20 @@ public final class ScanSession {
     }
 
     private boolean isUnused(Path rawPath) {
-        return acceptedByRaw.getOrDefault(rawPath, 0) == 0 && unresolvedByRaw.getOrDefault(rawPath, 0) == 0;
+        if (acceptedByRaw.getOrDefault(rawPath, 0) != 0 || unresolvedByRaw.getOrDefault(rawPath, 0) != 0) {
+            return false;
+        }
+        return raws.stream().filter(raw -> raw.path().equals(rawPath))
+                .anyMatch(raw -> finals.stream().anyMatch(finalImage -> sameCaptureDate(raw, finalImage)));
+    }
+
+    private static boolean sameCaptureDate(PhotoFile first, PhotoFile second) {
+        return captureDate(first).equals(captureDate(second));
+    }
+
+    private static LocalDate captureDate(PhotoFile file) {
+        Instant timestamp = file.captureTime() == null ? file.lastModified() : file.captureTime();
+        return timestamp.atZone(ZoneId.systemDefault()).toLocalDate();
     }
 
     private static boolean isAccepted(MatchStatus status) {

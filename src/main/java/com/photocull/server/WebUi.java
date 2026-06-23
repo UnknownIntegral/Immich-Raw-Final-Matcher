@@ -13,7 +13,7 @@ public final class WebUi {
                   <meta name="viewport" content="width=device-width, initial-scale=1">
                   <title>Photo Culling Assistant</title>
                   <style>
-                    :root { color-scheme:light; --bg:#f6f7f4; --panel:#fff; --ink:#202124; --muted:#646a73; --line:#d8dadd; --accent:#28635a; --accent-strong:#194840; --warn:#936400; --bad:#9a2f2f; }
+                    :root { color-scheme:light; --bg:#f6f7f4; --panel:#fff; --ink:#202124; --muted:#646a73; --line:#d8dadd; --accent:#28635a; --accent-strong:#194840; --warn:#936400; --bad:#9a2f2f; --success:#17603d; }
                     * { box-sizing:border-box; } body { margin:0; font-family:"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
                     header,main { max-width:1440px; margin:auto; padding:20px; } header { padding-bottom:6px; } h1,h2,h3,p { margin-top:0; } h1 { margin-bottom:4px; }
                     section { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:18px; margin-bottom:16px; }
@@ -24,6 +24,7 @@ public final class WebUi {
                     .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; } .metric { padding:11px; border:1px solid var(--line); border-radius:6px; background:#fbfcf9; } .metric div:first-child { color:var(--muted); font-size:12px; } .metric div:last-child { font-size:21px; font-weight:650; margin-top:3px; }
                     .permission-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; margin-top:12px; } .permission-card { border:1px solid var(--line); border-radius:6px; padding:12px; background:#fbfcf9; } .permission-card h3 { margin-bottom:8px; } .permission-check { display:grid; grid-template-columns:12px minmax(120px,1fr); gap:8px; align-items:start; margin:7px 0; font-size:13px; } .light { width:10px; height:10px; border-radius:50%; margin-top:4px; background:#9aa0a6; } .light.PASS { background:#1d7d4c; } .light.FAIL { background:var(--bad); } .light.SKIPPED,.light.UNSUPPORTED { background:var(--warn); }
                     .note,.muted { color:var(--muted); } .note { font-size:12px; margin-top:10px; } .status { min-height:20px; color:var(--muted); }
+                    .success-box { margin-top:14px; padding:12px; border:1px solid #9ac5aa; border-radius:6px; background:#e7f4eb; color:var(--success); font-weight:600; }
                     .table-wrap { overflow:auto; max-height:58vh; border:1px solid var(--line); border-radius:6px; } table { width:100%; border-collapse:collapse; font-size:13px; } th,td { padding:8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; } th { position:sticky; top:0; background:#f0f2ef; z-index:1; } .path { max-width:300px; overflow-wrap:anywhere; } .score-high { color:#17603d; font-weight:650; } .score-mid { color:var(--warn); font-weight:650; } .score-low { color:var(--bad); font-weight:650; }
                     .review-wrap { border:1px solid var(--line); border-radius:6px; padding:0 14px; } .review-header { display:flex; justify-content:space-between; gap:12px; align-items:center; padding-top:14px; } .review-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-width:1280px; margin:0 auto; padding:14px 0 18px; align-items:start; } .review-asset { min-width:0; } .review-preview { display:flex; align-items:center; justify-content:center; height:clamp(280px,52vh,640px); padding:6px; border:1px solid var(--line); border-radius:7px; background:#f4f6f4; } .review-thumb { display:block; width:100%; height:100%; object-fit:contain; border-radius:4px; background:#e7e9e7; } .review-missing { width:100%; height:100%; display:grid; place-items:center; color:var(--muted); background:#e7e9e7; border-radius:4px; } .review-caption { padding:9px 2px 0; } .review-caption-label { color:var(--muted); font-size:12px; font-weight:650; text-transform:uppercase; letter-spacing:.04em; } .asset { display:grid; grid-template-columns:112px 1fr; gap:10px; min-width:0; } .thumb { width:112px; height:84px; object-fit:cover; border-radius:5px; background:#e7e9e7; } .asset-name { overflow-wrap:anywhere; font-weight:600; } .asset-id { color:var(--muted); font-size:12px; overflow-wrap:anywhere; } .comparison { grid-column:1 / -1; width:100%; max-width:1000px; margin:4px auto 2px; border:1px solid var(--line); border-radius:7px; overflow:hidden; } .comparison table { font-size:13px; } .comparison th { position:static; background:#f0f2ef; } .comparison th:first-child { width:24%; } .comparison td { width:38%; overflow-wrap:anywhere; font-weight:600; } .comparison td.match { color:#17603d; background:#e7f4eb; } .comparison td.close { color:#7a5500; background:#fff3c4; } .comparison td.mismatch { color:#922d23; background:#fbe9e7; } .comparison td.missing { color:var(--muted); font-weight:400; } .review-match-details { grid-column:1 / -1; max-width:960px; margin:2px auto 0; text-align:center; } .review-actions { grid-column:1 / -1; display:flex; justify-content:center; gap:8px; } .candidate-list { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:8px; } .candidate { border:1px solid var(--line); border-radius:6px; padding:8px; display:grid; grid-template-columns:72px 1fr; gap:8px; background:#fbfcf9; } .candidate.selected { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); } .candidate .thumb { width:72px; height:58px; } .candidate button { grid-column:1 / -1; justify-self:start; } .history-controls { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; } .history-controls input { min-width:260px; }
                     @media (max-width:850px) { .grid { grid-template-columns:1fr; } .review-header { align-items:flex-start; flex-direction:column; } } @media (max-width:650px) { .review-grid { grid-template-columns:1fr; } .review-preview { height:clamp(250px,55vh,520px); } }
@@ -41,6 +42,7 @@ public final class WebUi {
                       </form>
                       <div class="progress-shell" id="progressShell" hidden><div id="progress" class="progress indeterminate"><div></div></div><span id="progressText" class="status">Starting...</span></div>
                       <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Approve dry-run plan</button><button id="applyTagsButton" disabled>Apply approved tags and Albums</button><button id="clearCacheButton" class="danger">Clear saved review data</button><span id="planStatus" class="status"></span><span id="message" class="status"></span></div>
+                      <div id="tagApplySuccess" class="success-box" hidden role="status"></div>
                     </section>
                     <section>
                       <h2>Immich API permissions</h2>
@@ -81,6 +83,8 @@ public final class WebUi {
                     const thumbnailObservers = new Map();
                     const $ = id => document.getElementById(id);
                     const message = text => $('message').textContent = text || '';
+                    const showTagApplySuccess = text => { $('tagApplySuccess').textContent = text; $('tagApplySuccess').hidden = false; };
+                    const hideTagApplySuccess = () => { $('tagApplySuccess').hidden = true; $('tagApplySuccess').textContent = ''; };
                     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
                     const scoreClass = score => score >= 90 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low';
                     $('scanForm').addEventListener('submit', startScan);
@@ -112,7 +116,7 @@ public final class WebUi {
                     async function startScan(event) {
                       event.preventDefault(); const accept = Number($('autoAccept').value); const reject = Number($('autoReject').value);
                       if (!(reject < accept)) { message('Auto-reject must be lower than auto-accept.'); return; }
-                      setBusy(true); showProgress('Starting Immich scan...', -1); message('');
+                      setBusy(true); hideTagApplySuccess(); showProgress('Starting Immich scan...', -1); message('');
                       try { const response = await apiFetch('/api/immich/scan', {method:'POST', body:new URLSearchParams({autoAccept:accept, autoReject:reject})}); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Scan failed'); await pollScan(); }
                       catch (error) { message(error.message); hideProgress(); setBusy(false); }
                     }
@@ -148,7 +152,7 @@ public final class WebUi {
                       } catch (error) { if (request === reviewRequest) message(error.message); }
                     }
                     async function writeDryRun() {
-                      setBusy(true); message('Freezing dry-run plan...');
+                      setBusy(true); hideTagApplySuccess(); message('Freezing dry-run plan...');
                       try { const response=await apiFetch('/api/dry-run',{method:'POST'}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Dry-run failed'); state.tagPlan=data.tagPlan; state.finalTagPlan=data.finalTagPlan||[]; if(state.session) state.session.activePlan=data.plan||null; render(); message(data.plan ? `Approved plan ${data.plan.id}.` : 'Dry-run plan approved.'); }
                       catch(error){message(error.message);} finally{setBusy(false);}
                     }
@@ -162,10 +166,9 @@ public final class WebUi {
                     async function applyTags() {
                       const plan=state.session?.activePlan;
                       if (!plan) { message('Approve a dry-run plan before applying tags.'); return; }
-                      if (plan.operation?.state === 'COMPLETE') { message('This approved plan has already completed.'); return; }
-                      if (!confirm(`Apply immutable plan ${plan.id}? This reconciles configured tags and adds assets to PCA Albums. Display-name renaming remains disabled until Immich exposes a safe API.`)) return;
+                      if (!confirm(`Apply immutable plan ${plan.id}? This first removes every PCA-managed tag from the scanned assets, then applies the current tag plan and adds assets to PCA Albums. Display-name renaming remains disabled until Immich exposes a safe API.`)) return;
                       setBusy(true); message('Applying Immich tags and Albums...');
-                      try { const response=await apiFetch('/api/immich/apply-tags',{method:'POST',body:new URLSearchParams({planId:plan.id})}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Plan application failed'); if(state.session?.activePlan) state.session.activePlan.operation=data.operation; render(); message(`Plan applied: ${data.rawFoundTagged}/${data.rawFoundAssets} RAW Found finals and ${data.keeperTagged}/${data.keeperAssets} Keeper RAWs.`); }
+                      try { const response=await apiFetch('/api/immich/apply-tags',{method:'POST',body:new URLSearchParams({planId:plan.id})}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Plan application failed'); if(state.session?.activePlan) state.session.activePlan.operation=data.operation; render(); const detail=`Tags applied successfully: ${data.keeperTagged}/${data.keeperAssets} Keeper, ${data.unusedTagged}/${data.unusedAssets} not used, ${data.finalNotFoundTagged}/${data.finalNotFoundAssets} Final not found.`; showTagApplySuccess(detail); message(''); }
                       catch(error){message(error.message);} finally{setBusy(false);}
                     }
                     async function clearReviewCache() {
@@ -235,9 +238,9 @@ public final class WebUi {
                       ['rawCount','finalCount','rawFoundCount','reviewCount','unusedCount','duplicateCount','duplicateRawCount'].forEach(id => $(id).textContent=s[id]||0);
                       $('possibleFinalCount').textContent=s.possibleDuplicateFinalCount||0; $('possibleRawCount').textContent=s.possibleDuplicateRawCount||0;
                       $('autoAccept').value=s.autoAcceptThreshold||$('autoAccept').value; $('autoReject').value=s.autoRejectThreshold??$('autoReject').value;
-                      const plan=s.activePlan; const completed=plan?.operation?.state==='COMPLETE';
-                      $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!plan||completed||busy; $('clearCacheButton').disabled=busy;
-                      $('planStatus').textContent=plan ? `Approved plan ${plan.id.slice(0,8)} (${plan.operation?.state||'READY'})` : (state.session ? 'Approve a dry-run plan before applying tags.' : '');
+                      const plan=s.activePlan;
+                      $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!plan||busy; $('clearCacheButton').disabled=busy;
+                      $('planStatus').textContent=plan ? `Approved plan ${plan.id.slice(0,8)} (${plan.operation?.state||'READY'}; reapply available)` : (state.session ? 'Approve a dry-run plan before applying tags.' : '');
                     }
                     function renderPermissions(){const view=$('permissionView');const report=state.permissions;if(!report){view.innerHTML='<div class="muted">Run a scan, then test each account-specific API key.</div>';return;}const account=entry=>`<article class="permission-card"><h3>${escapeHtml(entry?.label||'Immich API key')}</h3>${(entry?.checks||[]).map(check=>`<div class="permission-check"><span class="light ${escapeHtml(check.state||'SKIPPED')}"></span><div><strong>${escapeHtml(check.capability)}</strong><div class="muted">${escapeHtml(check.detail)}</div></div></div>`).join('')}</article>`;view.innerHTML=account(report.raw)+account(report.final);}
                     function renderActiveTab() { if(activeTab==='review') renderReview(); if(activeTab==='matches') renderMatches(); if(activeTab==='tagPlan') renderTagPlan(); if(activeTab==='finalTagPlan') renderFinalTagPlan(); if(activeTab==='history') renderHistory(); }
@@ -278,7 +281,7 @@ public final class WebUi {
                     function showTab(tab){activeTab=tab;['review','matches','tagPlan','finalTagPlan','history'].forEach(name=>{$(name+'Tab').classList.toggle('active',name===tab);$(name+'View').style.display=name===tab?'':'none';});renderActiveTab();if(tab==='review'&&!state.reviewRows.length)void refreshReview();if(tab==='matches'&&!state.matches.length)void loadMatches();if((tab==='tagPlan'||tab==='finalTagPlan')&&state.tagPlan===null)void loadTagPlan();if(tab==='history')void loadHistory();}
                     function showProgress(text,percent){$('progressShell').hidden=false;$('progressText').textContent=text||'Working...';const bar=$('progress');bar.classList.toggle('indeterminate',percent==null||percent<0);bar.firstElementChild.style.width=percent>=0?percent+'%':'';}
                     function hideProgress(){$('progressShell').hidden=true;}
-                    function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan||state.session?.activePlan?.operation?.state==='COMPLETE';$('permissionCheckButton').disabled=value||!state.session;$('clearCacheButton').disabled=value;if(activeTab==='review')renderReview();}
+                    function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan;$('permissionCheckButton').disabled=value||!state.session;$('clearCacheButton').disabled=value;if(activeTab==='review')renderReview();}
                     async function apiFetch(url,options={},retry=true){const headers=new Headers(options.headers||{});const token=localStorage.getItem('pcaAccessToken');if(token)headers.set('X-PCA-Token',token);const response=await fetch(url,{...options,headers});if(response.status===401&&retry){const entered=prompt('Access token');if(entered!==null){localStorage.setItem('pcaAccessToken',entered);return apiFetch(url,options,false);}}return response;}
                     async function restoreOnLoad(){try{const statusResponse=await apiFetch('/api/status');const status=await statusResponse.json();if(!statusResponse.ok)throw new Error(status.error||'Could not restore app state');state.permissions=status.permissions||null;if(status.hasSession){await loadSession();await refreshReview();}else{renderPermissions();}const job=status.scanJob;if(job?.state==='RUNNING'){setBusy(true);showProgress(job.message,job.percent);await pollScan();}else if(job?.state==='INTERRUPTED'){message(job.error||job.message);}}catch(error){message(error.message);}}
                     render(); restoreOnLoad();

@@ -743,7 +743,7 @@ public final class PhotoCullServer {
     }
 
     private List<TagPlanItem> rawTagPlan() {
-        return session.tagPlan(immichConfig.keeperTag(), immichConfig.unusedTag());
+        return session.tagPlan(immichConfig.keeperTag(), immichConfig.unusedTag(), immichConfig.finalNotFoundTag());
     }
 
     private List<FinalTagPlanItem> finalTagPlan() {
@@ -897,11 +897,13 @@ public final class PhotoCullServer {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("keeperAssets", result.keeperAssets());
         values.put("unusedAssets", result.unusedAssets());
+        values.put("finalNotFoundAssets", result.finalNotFoundAssets());
         values.put("rawFoundAssets", result.rawFoundAssets());
         values.put("noRawAssets", result.noRawAssets());
         values.put("duplicateAssets", result.duplicateAssets());
         values.put("keeperTagged", result.keeperTagged());
         values.put("unusedTagged", result.unusedTagged());
+        values.put("finalNotFoundTagged", result.finalNotFoundTagged());
         values.put("rawFoundTagged", result.rawFoundTagged());
         values.put("noRawTagged", result.noRawTagged());
         values.put("duplicateTagged", result.duplicateTagged());

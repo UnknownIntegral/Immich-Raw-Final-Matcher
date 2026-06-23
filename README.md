@@ -10,7 +10,7 @@ Photo Culling Assistant is an Unraid-hosted Immich helper that matches RAW asset
 4. Match edited images to RAW originals using filenames, capture time, and Immich metadata.
 5. Auto-accept high-confidence matches, auto-reject low-confidence matches, and review the score band in between with Immich thumbnails.
 6. Freeze and approve an immutable dry-run tag plan.
-7. Apply that exact plan, reconciling `RAW Found` / `No RAW` / `duplicate` on final images and `Keeper` / `not used` on RAWs through the Immich API.
+7. Apply that exact plan, reconciling `RAW Found` / `No RAW` / `duplicate` on final images and `Keeper` / `not used` / `Final not found` on RAWs through the Immich API.
 8. Delete or archive `not used` RAWs from Immich after reviewing the tag in Immich.
 
 The app must not move, rename, or delete files inside Immich-managed folders directly.
@@ -32,7 +32,7 @@ Ready now:
 - Required separate `RAW_IMMICH_API_KEY` and `FINAL_IMMICH_API_KEY` values; no shared or admin Immich key is accepted.
 - Immich image asset discovery by RAW owner ID and edited-image owner ID.
 - Match/tag plans that preserve Immich asset IDs.
-- Immich tag lookup/creation and tag application for `RAW Found`, `No RAW`, `duplicate`, `Keeper`, and `not used`.
+- Immich tag lookup/creation and tag application for `RAW Found`, `No RAW`, `duplicate`, `Keeper`, `not used`, and `Final not found`.
 - Configured Immich Album membership for each app-managed decision state; Album actions are frozen and resumed with the same approved plan as tag actions.
 - Deterministic date-and-sequence filename plans such as `2026-06-22-000001.jpg` / `2026-06-22-000001.cr3`, including unmatched finals, recorded in the immutable plan and manifest.
 - Separate RAW-key and final-key permission cards that test asset read, tags, Albums, and cleanup through temporary app-scoped probes without exposing either key.
@@ -67,7 +67,7 @@ If the container restarts during a scan, the active HTTP scan cannot resume from
 
 Each accept, reject, and undo decision is written immediately to `/config/scan-session.json`. You can stop reviewing and restart the container at any time; when it starts again, open the web UI and continue from the remaining review queue. Do not start a new scan unless you intentionally want to replace the saved session.
 
-The `/config` directory must be mapped to persistent host storage. The included Unraid template maps it to `/mnt/user/appdata/photo-culling-assistant`; retain that mapping when updating or recreating the container. For a direct Docker run, use an equivalent volume mapping:
+The `/config` directory must be mapped to persistent host storage. The included Unraid template maps it to `/mnt/user/appdata/photo-culling-assistant`; retain that mapping when updating or recreating the container. The container mirrors its stdout/stderr to `/config/logs/photo-culling-assistant-YYYY-MM-DD.log` and removes files older than seven days. For a direct Docker run, use an equivalent volume mapping:
 
 ```sh
 docker run -d --name photo-culling-assistant -p 8356:8356 \
@@ -81,12 +81,12 @@ After every review is resolved, select **Approve dry-run plan**. This writes an 
 
 The app will apply tags only when the request names the currently approved plan. Any new scan, review decision, undo, or tag-configuration change invalidates that approval; approve a new dry-run before applying.
 
-Each apply operation is checkpointed under `/config/tag-operations` before and after every tag mutation. If the container or Immich is interrupted, selecting **Apply approved plan** again resumes incomplete steps for that same plan. A completed plan is idempotent and is not re-applied.
+Each apply operation is checkpointed under `/config/tag-operations` before and after every tag mutation. If the container or Immich is interrupted, selecting **Apply approved plan** again resumes incomplete steps for that same plan. Selecting it after a completed operation starts a fresh refresh: it removes the configured PCA decision tags from all assets in the current plan, then reapplies the reviewed tag plan.
 
 The configured decision tags are treated as app-managed states:
 
-- RAW assets: `Keeper` and `not used` are mutually exclusive. The stale one is removed before the target state is applied.
-- Final assets: `RAW Found` and `No RAW` are mutually exclusive. `duplicate` remains additive, but is removed from finals that are no longer duplicate candidates.
+- RAW assets: `Keeper`, `not used`, and `Final not found` are mutually exclusive. `not used` means a final image exists on the same capture date, but that RAW has no accepted final match. `Final not found` means there are no final images on the RAW's capture date.
+- Final assets: `RAW Found`, `No RAW`, and `duplicate` are refreshed on every apply. All configured PCA decision tags are removed from the plan's assets before the reviewed tags are applied.
 
 Use dedicated tags for this app. Do not configure these names to overlap with unrelated manual tagging workflows, because the app will reconcile assignments for scanned assets.
 
@@ -96,6 +96,7 @@ Each approved plan also adds its assets to these default Immich Albums. Override
 
 - `PCA_KEEPER_ALBUM` (default `PCA - Keeper RAWs`)
 - `PCA_UNUSED_ALBUM` (default `PCA - Unused RAWs`)
+- `PCA_FINAL_NOT_FOUND_ALBUM` (default `PCA - Final Not Found RAWs`)
 - `PCA_RAW_FOUND_ALBUM` (default `PCA - Finished`)
 - `PCA_NO_RAW_ALBUM` (default `PCA - No RAW`)
 - `PCA_DUPLICATE_ALBUM` (default `PCA - Duplicates`)
@@ -151,7 +152,7 @@ The web UI server zip is written to `build/distributions/photo-culling-assistant
 
 This app requires two account-specific keys and does not read `IMMICH_API_KEY`.
 
-- `RAW_IMMICH_API_KEY`: scans RAW assets for `RAW_USER_ID`, fetches RAW thumbnails, and applies RAW-side `Keeper` / `not used` tags.
+- `RAW_IMMICH_API_KEY`: scans RAW assets for `RAW_USER_ID`, fetches RAW thumbnails, and applies RAW-side `Keeper` / `not used` / `Final not found` tags.
 - `FINAL_IMMICH_API_KEY`: scans final assets for `FINAL_USER_ID`, fetches final thumbnails, and applies final-side `RAW Found` / `No RAW` / `duplicate` tags.
 
 `/api/status` reports whether both required keys are configured, but never returns secret values.

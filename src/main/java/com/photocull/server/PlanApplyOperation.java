@@ -52,29 +52,32 @@ public final class PlanApplyOperation {
         Map<String, String> tags = plan.decisionTags();
         List<String> keepers = ids(plan.rawItems(), ImmutableTagPlan.KEEPER);
         List<String> unused = ids(plan.rawItems(), ImmutableTagPlan.UNUSED);
+        List<String> finalNotFound = ids(plan.rawItems(), ImmutableTagPlan.FINAL_NOT_FOUND);
         List<String> rawFound = ids(plan.finalItems(), ImmutableTagPlan.RAW_FOUND);
         List<String> noRaw = ids(plan.finalItems(), ImmutableTagPlan.NO_RAW);
         List<String> duplicates = ids(plan.finalItems(), ImmutableTagPlan.DUPLICATE);
-        Set<String> duplicateIds = new LinkedHashSet<>(duplicates);
-        List<String> nonDuplicates = allFinalDecisionIds(plan.finalItems()).stream()
-                .filter(id -> !duplicateIds.contains(id))
-                .toList();
+        List<String> allRawDecisionIds = allRawDecisionIds(plan.rawItems());
+        List<String> allFinalDecisionIds = allFinalDecisionIds(plan.finalItems());
 
         List<Step> steps = new ArrayList<>(List.of(
-                Step.pending("remove-raw-unused-from-keepers", ImmutableTagPlan.RAW, Mutation.REMOVE,
-                        tag(tags, ImmutableTagPlan.UNUSED), keepers),
-                Step.pending("remove-raw-keeper-from-unused", ImmutableTagPlan.RAW, Mutation.REMOVE,
-                        tag(tags, ImmutableTagPlan.KEEPER), unused),
-                Step.pending("remove-final-no-raw-from-raw-found", ImmutableTagPlan.FINAL, Mutation.REMOVE,
-                        tag(tags, ImmutableTagPlan.NO_RAW), rawFound),
-                Step.pending("remove-final-raw-found-from-no-raw", ImmutableTagPlan.FINAL, Mutation.REMOVE,
-                        tag(tags, ImmutableTagPlan.RAW_FOUND), noRaw),
-                Step.pending("remove-final-duplicate-from-non-duplicates", ImmutableTagPlan.FINAL, Mutation.REMOVE,
-                        tag(tags, ImmutableTagPlan.DUPLICATE), nonDuplicates),
+                Step.pending("remove-raw-keeper", ImmutableTagPlan.RAW, Mutation.REMOVE,
+                        tag(tags, ImmutableTagPlan.KEEPER), allRawDecisionIds),
+                Step.pending("remove-raw-unused", ImmutableTagPlan.RAW, Mutation.REMOVE,
+                        tag(tags, ImmutableTagPlan.UNUSED), allRawDecisionIds),
+                Step.pending("remove-raw-final-not-found", ImmutableTagPlan.RAW, Mutation.REMOVE,
+                        tag(tags, ImmutableTagPlan.FINAL_NOT_FOUND), allRawDecisionIds),
+                Step.pending("remove-final-raw-found", ImmutableTagPlan.FINAL, Mutation.REMOVE,
+                        tag(tags, ImmutableTagPlan.RAW_FOUND), allFinalDecisionIds),
+                Step.pending("remove-final-no-raw", ImmutableTagPlan.FINAL, Mutation.REMOVE,
+                        tag(tags, ImmutableTagPlan.NO_RAW), allFinalDecisionIds),
+                Step.pending("remove-final-duplicate", ImmutableTagPlan.FINAL, Mutation.REMOVE,
+                        tag(tags, ImmutableTagPlan.DUPLICATE), allFinalDecisionIds),
                 Step.pending("add-raw-keeper", ImmutableTagPlan.RAW, Mutation.ADD,
                         tag(tags, ImmutableTagPlan.KEEPER), keepers),
                 Step.pending("add-raw-unused", ImmutableTagPlan.RAW, Mutation.ADD,
                         tag(tags, ImmutableTagPlan.UNUSED), unused),
+                Step.pending("add-raw-final-not-found", ImmutableTagPlan.RAW, Mutation.ADD,
+                        tag(tags, ImmutableTagPlan.FINAL_NOT_FOUND), finalNotFound),
                 Step.pending("add-final-raw-found", ImmutableTagPlan.FINAL, Mutation.ADD,
                         tag(tags, ImmutableTagPlan.RAW_FOUND), rawFound),
                 Step.pending("add-final-no-raw", ImmutableTagPlan.FINAL, Mutation.ADD,
@@ -84,6 +87,7 @@ public final class PlanApplyOperation {
         ));
         addAlbumStep(steps, "add-raw-keeper-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.KEEPER, keepers);
         addAlbumStep(steps, "add-raw-unused-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.UNUSED, unused);
+        addAlbumStep(steps, "add-raw-final-not-found-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.FINAL_NOT_FOUND, finalNotFound);
         addAlbumStep(steps, "add-final-raw-found-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.RAW_FOUND, rawFound);
         addAlbumStep(steps, "add-final-no-raw-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.NO_RAW, noRaw);
         addAlbumStep(steps, "add-final-duplicate-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.DUPLICATE, duplicates);
@@ -204,6 +208,17 @@ public final class PlanApplyOperation {
         LinkedHashSet<String> ids = new LinkedHashSet<>();
         for (ImmutableTagPlan.PlanItem item : items) {
             if (ImmutableTagPlan.RAW_FOUND.equals(item.decision()) || ImmutableTagPlan.NO_RAW.equals(item.decision())) {
+                ids.add(item.assetId());
+            }
+        }
+        return List.copyOf(ids);
+    }
+
+    private static List<String> allRawDecisionIds(List<ImmutableTagPlan.PlanItem> items) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (ImmutableTagPlan.PlanItem item : items) {
+            if (ImmutableTagPlan.KEEPER.equals(item.decision()) || ImmutableTagPlan.UNUSED.equals(item.decision())
+                    || ImmutableTagPlan.FINAL_NOT_FOUND.equals(item.decision())) {
                 ids.add(item.assetId());
             }
         }

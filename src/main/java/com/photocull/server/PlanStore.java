@@ -66,6 +66,12 @@ final class PlanStore {
             if (!operation.planId().equals(plan.id()) || !operation.planFingerprint().equals(plan.fingerprint())) {
                 throw new IOException("Stored apply operation does not match the approved tag plan.");
             }
+            if (operation.isComplete()) {
+                // Every user-triggered apply refreshes the app-managed tags. Interrupted
+                // operations still resume from their durable checkpoint instead.
+                operation = PlanApplyOperation.create(plan);
+                saveOperation(operation);
+            }
             return operation;
         }
         PlanApplyOperation operation = PlanApplyOperation.create(plan);

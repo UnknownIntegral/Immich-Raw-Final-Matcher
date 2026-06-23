@@ -24,6 +24,7 @@ public final class ImmutableTagPlan {
     public static final String FINAL = "FINAL";
     public static final String KEEPER = "KEEPER";
     public static final String UNUSED = "UNUSED";
+    public static final String FINAL_NOT_FOUND = "FINAL_NOT_FOUND";
     public static final String RAW_FOUND = "RAW_FOUND";
     public static final String NO_RAW = "NO_RAW";
     public static final String DUPLICATE = "DUPLICATE";
@@ -68,14 +69,16 @@ public final class ImmutableTagPlan {
         Map<String, String> tags = decisionTags(config);
         Map<String, String> albums = decisionAlbums(config);
         Map<String, String> fileNames = FilenamePlanner.plan(session);
-        validateDistinctTags(tags, RAW, KEEPER, UNUSED);
+        validateDistinctTags(tags, RAW, KEEPER, UNUSED, FINAL_NOT_FOUND);
         validateDistinctTags(tags, FINAL, RAW_FOUND, NO_RAW, DUPLICATE);
 
         List<PlanItem> rawItems = new ArrayList<>();
-        for (TagPlanItem item : session.tagPlan(tags.get(KEEPER), tags.get(UNUSED))) {
+        for (TagPlanItem item : session.tagPlan(tags.get(KEEPER), tags.get(UNUSED), tags.get(FINAL_NOT_FOUND))) {
+            String decision = item.tag().equals(tags.get(KEEPER)) ? KEEPER
+                    : item.tag().equals(tags.get(UNUSED)) ? UNUSED : FINAL_NOT_FOUND;
             rawItems.add(new PlanItem(
                     RAW,
-                    item.tag().equals(tags.get(KEEPER)) ? KEEPER : UNUSED,
+                    decision,
                     item.tag(),
                     requiredAssetId(item.rawAssetId(), "RAW"),
                     item.raw().path().toString(),
@@ -83,7 +86,7 @@ public final class ImmutableTagPlan {
                     item.matchedFinalPath() == null ? null : item.matchedFinalPath().toString(),
                     item.score(),
                     item.basis(),
-                    albums.get(item.tag().equals(tags.get(KEEPER)) ? KEEPER : UNUSED),
+                    albums.get(decision),
                     requiredFileName(fileNames, item.rawAssetId())
             ));
         }
@@ -234,6 +237,7 @@ public final class ImmutableTagPlan {
         Map<String, String> tags = new LinkedHashMap<>();
         tags.put(KEEPER, config.keeperTag());
         tags.put(UNUSED, config.unusedTag());
+        tags.put(FINAL_NOT_FOUND, config.finalNotFoundTag());
         tags.put(RAW_FOUND, config.rawFoundTag());
         tags.put(NO_RAW, config.noRawTag());
         tags.put(DUPLICATE, config.duplicateTag());
@@ -242,7 +246,7 @@ public final class ImmutableTagPlan {
 
     private static Map<String, String> decisionAlbums(ImmichConfig config) {
         Map<String, String> configured = new LinkedHashMap<>(config.decisionAlbums());
-        for (String decision : List.of(KEEPER, UNUSED, RAW_FOUND, NO_RAW, DUPLICATE)) {
+        for (String decision : List.of(KEEPER, UNUSED, FINAL_NOT_FOUND, RAW_FOUND, NO_RAW, DUPLICATE)) {
             configured.putIfAbsent(decision, "");
         }
         return configured;

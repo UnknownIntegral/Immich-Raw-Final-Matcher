@@ -13,6 +13,7 @@ public record ImmichConfig(
         String finalUserId,
         String keeperTag,
         String unusedTag,
+        String finalNotFoundTag,
         String rawFoundTag,
         String noRawTag,
         String duplicateTag,
@@ -35,7 +36,7 @@ public record ImmichConfig(
             String keeperTag, String unusedTag, String rawFoundTag, String noRawTag, String duplicateTag,
             int pageSize, int maxPages
     ) {
-        this(url, rawApiKey, finalApiKey, rawUserId, finalUserId, keeperTag, unusedTag, rawFoundTag, noRawTag,
+        this(url, rawApiKey, finalApiKey, rawUserId, finalUserId, keeperTag, unusedTag, "Final not found", rawFoundTag, noRawTag,
                 duplicateTag, pageSize, maxPages, DEFAULT_REQUEST_TIMEOUT_SECONDS,
                 DEFAULT_MUTATION_BATCH_SIZE, DEFAULT_REQUEST_RETRY_ATTEMPTS);
     }
@@ -49,6 +50,7 @@ public record ImmichConfig(
                 env("FINAL_USER_ID"),
                 firstNonBlank(env("PCA_KEEPER_TAG"), "Keeper"),
                 firstNonBlank(env("PCA_UNUSED_TAG"), "not used"),
+                firstNonBlank(env("PCA_FINAL_NOT_FOUND_TAG"), "Final not found"),
                 firstNonBlank(env("PCA_RAW_FOUND_TAG"), "RAW Found"),
                 firstNonBlank(env("PCA_NO_RAW_TAG"), "No RAW"),
                 firstNonBlank(env("PCA_DUPLICATE_TAG"), "duplicate"),
@@ -162,6 +164,7 @@ public record ImmichConfig(
         Map<String, String> albums = new LinkedHashMap<>();
         albums.put("KEEPER", firstNonBlank(env("PCA_KEEPER_ALBUM"), "PCA - Keeper RAWs"));
         albums.put("UNUSED", firstNonBlank(env("PCA_UNUSED_ALBUM"), "PCA - Unused RAWs"));
+        albums.put("FINAL_NOT_FOUND", firstNonBlank(env("PCA_FINAL_NOT_FOUND_ALBUM"), "PCA - Final Not Found RAWs"));
         albums.put("RAW_FOUND", firstNonBlank(env("PCA_RAW_FOUND_ALBUM"), "PCA - Finished"));
         albums.put("NO_RAW", firstNonBlank(env("PCA_NO_RAW_ALBUM"), "PCA - No RAW"));
         albums.put("DUPLICATE", firstNonBlank(env("PCA_DUPLICATE_ALBUM"), "PCA - Duplicates"));
