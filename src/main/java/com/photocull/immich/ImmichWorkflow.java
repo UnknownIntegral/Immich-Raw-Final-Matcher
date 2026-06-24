@@ -1,5 +1,6 @@
 package com.photocull.immich;
 
+import com.photocull.server.AppLog;
 import com.photocull.matcher.MatchEngine;
 import com.photocull.matcher.PhotoFile;
 import com.photocull.server.ImmutableTagPlan;
@@ -12,6 +13,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -19,7 +22,7 @@ import java.util.function.IntConsumer;
 
 public final class ImmichWorkflow {
     private static final Set<String> RAW_EXTENSIONS = Set.of(
-            "cr2", "cr3", "arw", "dng", "nef", "nrw", "orf", "raf", "rw2", "pef", "srw", "x3f"
+            "cr2", "cr3", "arw", "dng", "nef", "nrw", "orf", "raf", "rw2", "pef", "srw", "tif", "x3f"
     );
     private static final Set<String> FINISHED_EXTENSIONS = Set.of("jpg", "jpeg", "png");
 
@@ -55,6 +58,8 @@ public final class ImmichWorkflow {
 
     public ScanSession scan(int autoAcceptThreshold, int autoRejectThreshold, Consumer<String> progress) throws IOException, InterruptedException {
         config.requireConfigured();
+        long startedAt = System.nanoTime();
+        AppLog.info("immich.scan_started", Map.of("autoAcceptThreshold", autoAcceptThreshold, "autoRejectThreshold", autoRejectThreshold));
         progress.accept("Reading RAW-account assets from Immich...");
         List<PhotoFile> raws = rawClient.imageAssetsForOwner(config.rawUserId(), RAW_EXTENSIONS, progress)
                 .stream()
@@ -68,9 +73,12 @@ public final class ImmichWorkflow {
                 .toList();
 
         progress.accept("Matching " + finals.size() + " edited images to " + raws.size() + " RAW assets...");
-        return new ScanSession(raws, finals,
+        ScanSession session = new ScanSession(raws, finals,
                 new MatchEngine().match(raws, finals, autoAcceptThreshold, autoRejectThreshold, progress),
                 autoAcceptThreshold, autoRejectThreshold);
+        AppLog.info("immich.scan_matched", Map.of("rawCount", raws.size(), "finalCount", finals.size(),
+                "reviewCount", session.reviewCount(), "durationMillis", java.time.Duration.ofNanos(System.nanoTime() - startedAt).toMillis()));
+        return session;
     }
 
     public ScanSession scan(int threshold, Consumer<String> progress) throws IOException, InterruptedException {
@@ -84,6 +92,7 @@ public final class ImmichWorkflow {
      */
     public ImmichPermissionReport checkPermissions(ScanSession session) {
         config.requireConfigured();
+        AppLog.info("immich.permission_check_started", Map.of("rawAssets", session.raws().size(), "finalAssets", session.finals().size()));
         return new ImmichPermissionReport(Instant.now(),
                 checkAccount("RAW API key", rawClient, config.rawUserId(), RAW_EXTENSIONS, session.raws()),
                 checkAccount("Final API key", finalClient, config.finalUserId(), FINISHED_EXTENSIONS, session.finals()));
@@ -258,12 +267,15 @@ public final class ImmichWorkflow {
             return result(plan, operation, plan.manifest());
         }
         operation.begin();
+        AppLog.info("immich.plan_apply_started", Map.of("planId", AppLog.shortId(plan.id()),
+                "operationId", AppLog.shortId(operation.id()), "steps", operation.steps().size()));
         checkpoint.accept(operation);
         for (PlanApplyOperation.Step step : operation.steps()) {
             if (step.state() == PlanApplyOperation.StepState.COMPLETE) {
                 continue;
             }
             operation.start(step);
+            AppLog.info("immich.plan_step_started", stepFields(plan, operation, step));
             checkpoint.accept(operation);
             try {
                 int affected = execute(step, acknowledgedAssets -> {
@@ -271,9 +283,13 @@ public final class ImmichWorkflow {
                     checkpoint.accept(operation);
                 });
                 operation.complete(step, affected);
+                Map<String, Object> fields = stepFields(plan, operation, step);
+                fields.put("affectedAssets", affected);
+                AppLog.info("immich.plan_step_completed", fields);
                 checkpoint.accept(operation);
             } catch (IOException | InterruptedException | RuntimeException ex) {
                 operation.fail(step, ex);
+                AppLog.error("immich.plan_step_failed", stepFields(plan, operation, step), ex);
                 checkpoint.accept(operation);
                 throw ex;
             }
@@ -378,6 +394,8 @@ public final class ImmichWorkflow {
             }
             requireEntireBatch("tag", start / batchSize + 1, totalBatches, batch.size(), batchAffected);
             tagged += batchAffected;
+            AppLog.info("immich.mutation_batch_completed", Map.of("resource", "tag", "mutation", mutation.name(),
+                    "batch", start / batchSize + 1, "batchCount", totalBatches, "requested", batch.size(), "acknowledged", tagged));
             checkpoint.accept(tagged);
         }
         return tagged;
@@ -409,6 +427,8 @@ public final class ImmichWorkflow {
             }
             requireEntireBatch("album", start / batchSize + 1, totalBatches, batch.size(), batchAffected);
             affected += batchAffected;
+            AppLog.info("immich.mutation_batch_completed", Map.of("resource", "album", "mutation", mutation.name(),
+                    "batch", start / batchSize + 1, "batchCount", totalBatches, "requested", batch.size(), "acknowledged", affected));
             checkpoint.accept(affected);
         }
         return affected;
@@ -451,6 +471,20 @@ public final class ImmichWorkflow {
             }
         }
         return false;
+    }
+
+    private Map<String, Object> stepFields(ImmutableTagPlan plan, PlanApplyOperation operation, PlanApplyOperation.Step step) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("planId", AppLog.shortId(plan.id()));
+        values.put("operationId", AppLog.shortId(operation.id()));
+        values.put("step", step.id());
+        values.put("account", step.account().toLowerCase());
+        values.put("resource", step.resource().name().toLowerCase());
+        values.put("mutation", step.mutation().name().toLowerCase());
+        values.put("label", step.tag());
+        values.put("assetCount", step.assetIds().size());
+        values.put("alreadyAcknowledged", step.affectedAssets());
+        return values;
     }
 
     private ImmichTagApplyResult result(ImmutableTagPlan plan, PlanApplyOperation operation, Path manifest) {

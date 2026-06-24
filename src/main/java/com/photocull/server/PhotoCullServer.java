@@ -9,6 +9,7 @@ import com.photocull.matcher.MatchResult;
 import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.PhotoFile;
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
@@ -29,6 +30,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
+import java.util.UUID;
 
 public final class PhotoCullServer {
     private static final int DEFAULT_PAGE_SIZE = 250;
@@ -49,12 +51,14 @@ public final class PhotoCullServer {
     private volatile PlanApplyOperation activeOperation;
     private volatile ImmichPermissionReport permissionReport;
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService operationExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService stateRestoreExecutor = Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService persistenceExecutor = Executors.newSingleThreadScheduledExecutor();
     private final Object persistenceLock = new Object();
     private final Object applyLock = new Object();
     private ScheduledFuture<?> pendingPersistence;
     private volatile boolean tagApplicationInProgress;
+    private volatile OperationJob operationJob;
     private volatile boolean stateRestoreInProgress = true;
     private HttpServer server;
 
@@ -80,26 +84,30 @@ public final class PhotoCullServer {
     public void start() throws IOException {
         Files.createDirectories(configDir);
         server = HttpServer.create(new InetSocketAddress(port), 0);
-        server.createContext("/", this::handleIndex);
-        server.createContext("/api/status", this::handleStatus);
-        server.createContext("/api/session", this::handleSession);
-        server.createContext("/api/review", this::handleReview);
-        server.createContext("/api/matches", this::handleMatches);
-        server.createContext("/api/history", this::handleHistory);
-        server.createContext("/api/cache/clear", this::handleClearCache);
-        server.createContext("/api/match/status", this::handleMatchStatus);
-        server.createContext("/api/match/undo", this::handleMatchUndo);
-        server.createContext("/api/tag-plan", this::handleTagPlan);
-        server.createContext("/api/dry-run", this::handleDryRun);
-        server.createContext("/api/immich/users", this::handleImmichUsers);
-        server.createContext("/api/immich/scan", this::handleImmichScan);
-        server.createContext("/api/immich/scan/status", this::handleImmichScanStatus);
-        server.createContext("/api/immich/thumbnail", this::handleImmichThumbnail);
-        server.createContext("/api/immich/permissions", this::handleImmichPermissions);
-        server.createContext("/api/immich/apply-tags", this::handleImmichApplyTags);
+        server.createContext("/", logged(this::handleIndex));
+        server.createContext("/api/status", logged(this::handleStatus));
+        server.createContext("/api/session", logged(this::handleSession));
+        server.createContext("/api/review", logged(this::handleReview));
+        server.createContext("/api/matches", logged(this::handleMatches));
+        server.createContext("/api/history", logged(this::handleHistory));
+        server.createContext("/api/cache/clear", logged(this::handleClearCache));
+        server.createContext("/api/match/status", logged(this::handleMatchStatus));
+        server.createContext("/api/match/undo", logged(this::handleMatchUndo));
+        server.createContext("/api/tag-plan", logged(this::handleTagPlan));
+        server.createContext("/api/dry-run", logged(this::handleDryRun));
+        server.createContext("/api/operation/status", logged(this::handleOperationStatus));
+        server.createContext("/api/immich/users", logged(this::handleImmichUsers));
+        server.createContext("/api/immich/scan", logged(this::handleImmichScan));
+        server.createContext("/api/immich/scan/status", logged(this::handleImmichScanStatus));
+        server.createContext("/api/immich/thumbnail", logged(this::handleImmichThumbnail));
+        server.createContext("/api/immich/permissions", logged(this::handleImmichPermissions));
+        server.createContext("/api/immich/apply-tags", logged(this::handleImmichApplyTags));
         int requestThreads = Math.max(4, Math.min(16, Runtime.getRuntime().availableProcessors()));
         server.setExecutor(Executors.newFixedThreadPool(requestThreads));
         server.start();
+        AppLog.info("http.server.started", Map.of("port", port, "requestThreads", requestThreads));
+        logHealth();
+        persistenceExecutor.scheduleAtFixedRate(this::logHealth, 15, 15, TimeUnit.MINUTES);
         stateRestoreExecutor.submit(() -> {
             try {
                 restorePersistedState();
@@ -107,7 +115,25 @@ public final class PhotoCullServer {
                 stateRestoreExecutor.shutdown();
             }
         });
-        Runtime.getRuntime().addShutdownHook(new Thread(this::flushPersistedState, "pca-state-flush"));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            AppLog.info("application.shutdown", Map.of("reason", "JVM shutdown hook"));
+            flushPersistedState();
+        }, "pca-state-flush"));
+    }
+
+    private HttpHandler logged(HttpHandler delegate) {
+        return exchange -> {
+            exchange.setAttribute("pca.requestId", UUID.randomUUID().toString());
+            exchange.setAttribute("pca.startedAtNanos", System.nanoTime());
+            try {
+                delegate.handle(exchange);
+            } catch (Exception ex) {
+                AppLog.error("http.request.unhandled", requestFields(exchange), ex);
+                if (!exchange.getResponseHeaders().containsKey("Content-Type")) {
+                    send(exchange, 500, "application/json", error("Unexpected server error."));
+                }
+            }
+        };
     }
 
     private void handleIndex(HttpExchange exchange) throws IOException {
@@ -252,8 +278,12 @@ public final class PhotoCullServer {
             if (!"true".equals(form.get("confirm"))) {
                 throw new IllegalArgumentException("Confirm that you want to permanently clear saved review data.");
             }
-            if (scanRunning()) {
+        if (scanRunning()) {
                 send(exchange, 409, "application/json", error("Wait for the active Immich scan to finish before clearing saved review data."));
+                return;
+            }
+            if (operationRunning()) {
+                send(exchange, 409, "application/json", error("Wait for the active operation to finish before clearing saved review data."));
                 return;
             }
             if (tagApplicationInProgress) {
@@ -281,6 +311,7 @@ public final class PhotoCullServer {
                 historyStore.clear();
                 planStore.clear();
             }
+            AppLog.warn("state.cleared", Map.of("action", "saved_review_data"));
             sendJson(exchange, Json.object(Map.of("message", "Saved review data cleared.")));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -315,6 +346,9 @@ public final class PhotoCullServer {
             invalidateActivePlan();
             persistStateImmediately();
             historyStore.recordReviewDecision(session, previous, updated);
+            AppLog.info("review.decision", Map.of(
+                    "sessionRevision", session.revision(), "status", updated.status().name(),
+                    "score", updated.score(), "alternateRawSelected", previous.raw() != updated.raw()));
             sendJson(exchange, matchStatusJson(index, updated));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -358,16 +392,24 @@ public final class PhotoCullServer {
         }
 
         try {
-            ImmutableTagPlan existing = approvedPlanForCurrentSession();
-            if (existing != null) {
-                sendJson(exchange, tagPlanJson(existing));
-                return;
+            synchronized (applyLock) {
+                if (scanRunning()) {
+                    throw new IllegalStateException("Wait for the active Immich scan to finish before approving a dry-run plan.");
+                }
+                if (operationRunning()) {
+                    throw new IllegalStateException("Another long operation is already running.");
+                }
+                ImmutableTagPlan existing = approvedPlanForCurrentSession();
+                if (existing != null) {
+                    sendJson(exchange, tagPlanJson(existing));
+                    return;
+                }
+                ScanSession sessionSnapshot = session;
+                OperationJob job = new OperationJob("DRY_RUN", "Preparing plan", "Preparing the immutable dry-run plan...");
+                operationJob = job;
+                operationExecutor.submit(() -> runDryRun(job, sessionSnapshot));
+                send(exchange, 202, "application/json; charset=utf-8", Json.object(Map.of("job", job.json())));
             }
-            ImmutableTagPlan plan = ImmutableTagPlan.fromSession(session, immichConfig);
-            activePlan = planStore.freeze(plan);
-            activeOperation = null;
-            historyStore.recordPlanApproved(session, activePlan);
-            sendJson(exchange, tagPlanJson(activePlan));
         } catch (IllegalArgumentException | IllegalStateException ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
         } catch (Exception ex) {
@@ -385,7 +427,9 @@ public final class PhotoCullServer {
         }
 
         try {
+            AppLog.info("immich.users.requested", Map.of());
             List<ImmichUser> users = immichWorkflow.users();
+            AppLog.info("immich.users.received", Map.of("count", users.size()));
             sendJson(exchange, Json.object(Map.of("users", userRows(users))));
         } catch (Exception ex) {
             send(exchange, 500, "application/json", error(ex.getMessage()));
@@ -408,6 +452,10 @@ public final class PhotoCullServer {
             send(exchange, 409, "application/json", error("An Immich scan is already running."));
             return;
         }
+        if (operationRunning()) {
+            send(exchange, 409, "application/json", error("Wait for the active operation to finish before starting an Immich scan."));
+            return;
+        }
         try {
             Map<String, String> form = FormData.parse(FormData.body(exchange));
             int autoAccept = parseThreshold(form.getOrDefault("autoAccept", "90"));
@@ -420,7 +468,10 @@ public final class PhotoCullServer {
             ScanJob job = new ScanJob(this::schedulePersistState);
             scanJob = job;
             schedulePersistState();
+            AppLog.info("scan.started", Map.of("scanId", AppLog.shortId(job.id()), "autoAcceptThreshold", autoAccept,
+                    "autoRejectThreshold", autoReject));
             scanExecutor.submit(() -> {
+                long startedAt = System.nanoTime();
                 try {
                     ScanSession scanSession = immichWorkflow.scan(autoAccept, autoReject, job::progress);
                     job.progress("Finding duplicates...");
@@ -430,13 +481,60 @@ public final class PhotoCullServer {
                     historyStore.recordScanCompleted(scanSession);
                     session = scanSession;
                     job.complete();
+                    AppLog.info("scan.completed", Map.of("scanId", AppLog.shortId(job.id()),
+                            "rawCount", scanSession.raws().size(), "finalCount", scanSession.finals().size(),
+                            "matchCount", scanSession.results().size(), "reviewCount", scanSession.reviewCount(),
+                            "duplicateFinalCount", scanSession.duplicateCount(), "duplicateRawCount", scanSession.duplicateRawCount(),
+                            "durationMillis", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)));
                 } catch (Exception ex) {
                     job.fail(ex);
+                    AppLog.error("scan.failed", Map.of("scanId", AppLog.shortId(job.id()),
+                            "durationMillis", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)), ex);
                 }
             });
             send(exchange, 202, "application/json; charset=utf-8", Json.object(Map.of("job", job.json())));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
+        }
+    }
+
+    private void handleOperationStatus(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (operationJob == null) {
+            send(exchange, 404, "application/json", error("No long-running operation exists yet."));
+            return;
+        }
+        sendJson(exchange, Json.object(Map.of("job", operationJob.json())));
+    }
+
+    private void runDryRun(OperationJob job, ScanSession sessionSnapshot) {
+        try {
+            int assetCount = sessionSnapshot.raws().size() + sessionSnapshot.finals().size();
+            long sessionRevision = sessionSnapshot.revision();
+            job.progress("Building plan", "Building decisions for " + assetCount + " scanned assets...", 0, assetCount + 2);
+            ImmutableTagPlan plan = ImmutableTagPlan.fromSession(sessionSnapshot, immichConfig);
+            job.progress("Writing plan", "Writing the immutable plan and CSV manifest...", assetCount, assetCount + 2);
+            if (session != sessionSnapshot || session.revision() != sessionRevision) {
+                throw new IllegalStateException("Review decisions changed while the dry-run plan was being prepared. Approve it again.");
+            }
+            activePlan = planStore.freeze(plan);
+            activeOperation = null;
+            job.progress("Recording approval", "Saving the approved-plan audit record...", assetCount + 1, assetCount + 2);
+            historyStore.recordPlanApproved(sessionSnapshot, activePlan);
+            job.complete("Dry-run plan approved: " + activePlan.rawItems().size() + " RAW and "
+                    + activePlan.finalItems().size() + " final-image decisions.");
+            AppLog.info("plan.approved", Map.of("planId", AppLog.shortId(activePlan.id()),
+                    "fingerprint", AppLog.shortId(activePlan.fingerprint()), "rawItems", activePlan.rawItems().size(),
+                    "finalItems", activePlan.finalItems().size()));
+        } catch (Exception ex) {
+            job.fail(ex);
+            AppLog.error("plan.approval_failed", Map.of("operationId", AppLog.shortId(job.id())), ex);
         }
     }
 
@@ -466,6 +564,7 @@ public final class PhotoCullServer {
             if (previous != null) {
                 historyStore.recordReviewUndo(session, previous, restored);
             }
+            AppLog.info("review.undone", Map.of("sessionRevision", session.revision(), "index", index));
             sendJson(exchange, matchStatusJson(index, restored));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -521,7 +620,9 @@ public final class PhotoCullServer {
             try (OutputStream output = exchange.getResponseBody()) {
                 output.write(thumbnail);
             }
+            logHttpResponse(exchange, 200, thumbnail.length, true);
         } catch (Exception ex) {
+            AppLog.error("thumbnail.fetch_failed", Map.of("assetId", AppLog.shortId(assetId), "account", rawAsset ? "raw" : "final"), ex);
             send(exchange, 502, "application/json", error(ex.getMessage()));
         }
     }
@@ -548,6 +649,8 @@ public final class PhotoCullServer {
                 }
                 permissionReport = immichWorkflow.checkPermissions(session);
             }
+            AppLog.info("permissions.checked", Map.of("rawFailures", permissionFailures(permissionReport.raw()),
+                    "finalFailures", permissionFailures(permissionReport.finalAccount())));
             sendJson(exchange, Json.object(Map.of("permissions", permissionRows(permissionReport))));
         } catch (Exception ex) {
             send(exchange, 400, "application/json", error(ex.getMessage()));
@@ -571,7 +674,6 @@ public final class PhotoCullServer {
         }
 
         ImmutableTagPlan plan = null;
-        PlanApplyOperation operation = null;
         try {
             Map<String, String> form = FormData.parse(FormData.body(exchange));
             String planId = require(form, "planId");
@@ -583,45 +685,89 @@ public final class PhotoCullServer {
                 throw new IllegalArgumentException("The requested plan is no longer the active approved plan. Refresh and confirm again.");
             }
 
-            ImmichTagApplyResult result;
             synchronized (applyLock) {
+                if (operationRunning() || tagApplicationInProgress) {
+                    throw new IllegalStateException("A tag application is already running.");
+                }
                 ImmutableTagPlan stillApproved = approvedPlanForCurrentSession();
                 if (stillApproved == null || !stillApproved.id().equals(plan.id())
                         || !stillApproved.fingerprint().equals(plan.fingerprint())) {
                     throw new IllegalStateException("The approved plan changed before tag application could start. Refresh and confirm again.");
                 }
-                operation = planStore.loadOrCreateOperation(plan);
-                activeOperation = operation;
                 tagApplicationInProgress = true;
-                try {
-                    result = immichWorkflow.applyTags(plan, operation, updated -> {
-                        try {
-                            planStore.saveOperation(updated);
-                            activeOperation = updated;
-                        } catch (IOException ex) {
-                            throw new IllegalStateException("Could not checkpoint the tag application: " + ex.getMessage(), ex);
-                        }
-                    });
-                } finally {
-                    tagApplicationInProgress = false;
-                }
+                OperationJob job = new OperationJob("TAG_APPLICATION", "Preparing tag application",
+                        "Loading the resumable tag-application checkpoint...");
+                operationJob = job;
+                ImmutableTagPlan approvedSnapshot = plan;
+                ScanSession sessionSnapshot = session;
+                operationExecutor.submit(() -> runTagApplication(job, approvedSnapshot, sessionSnapshot));
+                send(exchange, 202, "application/json; charset=utf-8", Json.object(Map.of("job", job.json())));
             }
-            try {
-                historyStore.recordApplyResult(session, plan, operation, result);
-            } catch (IOException historyFailure) {
-                System.err.println("Could not record completed tag application: " + historyFailure.getMessage());
-            }
-            sendJson(exchange, applyResultJson(result, operation));
         } catch (Exception ex) {
-            if (plan != null) {
-                try {
-                    historyStore.recordApplyFailure(session, plan, operation, ex);
-                } catch (IOException historyFailure) {
-                    System.err.println("Could not record failed tag application: " + historyFailure.getMessage());
-                }
-            }
             send(exchange, 400, "application/json", error(ex.getMessage()));
         }
+    }
+
+    private void runTagApplication(OperationJob job, ImmutableTagPlan plan, ScanSession sessionSnapshot) {
+        PlanApplyOperation operation = null;
+        try {
+            operation = planStore.loadOrCreateOperation(plan);
+            activeOperation = operation;
+            updateApplyProgress(job, operation);
+            AppLog.info("plan.apply_started", Map.of("planId", AppLog.shortId(plan.id()),
+                    "operationId", AppLog.shortId(operation.id()), "resuming", operation.steps().stream().anyMatch(step -> step.affectedAssets() > 0)));
+            PlanApplyOperation checkpointOperation = operation;
+            ImmichTagApplyResult result = immichWorkflow.applyTags(plan, operation, updated -> {
+                try {
+                    planStore.saveOperation(updated);
+                    activeOperation = updated;
+                    updateApplyProgress(job, updated);
+                    AppLog.debug("plan.apply_checkpoint", Map.of("planId", AppLog.shortId(updated.planId()),
+                            "operationId", AppLog.shortId(updated.id()), "state", updated.state().name()));
+                } catch (IOException ex) {
+                    throw new IllegalStateException("Could not checkpoint the tag application: " + ex.getMessage(), ex);
+                }
+            });
+            try {
+                historyStore.recordApplyResult(sessionSnapshot, plan, checkpointOperation, result);
+            } catch (IOException historyFailure) {
+                AppLog.error("history.apply_result_record_failed", Map.of("planId", AppLog.shortId(plan.id())), historyFailure);
+            }
+            job.complete("Tags and Albums applied successfully. " + checkpointOperation.steps().size() + " steps completed.");
+            AppLog.info("plan.apply_completed", Map.of("planId", AppLog.shortId(plan.id()),
+                    "operationId", AppLog.shortId(checkpointOperation.id()), "state", checkpointOperation.state().name()));
+        } catch (Exception ex) {
+            job.fail(ex);
+            AppLog.error("plan.apply_failed", Map.of("planId", AppLog.shortId(plan.id()),
+                    "operationId", operation == null ? "" : AppLog.shortId(operation.id())), ex);
+            try {
+                historyStore.recordApplyFailure(sessionSnapshot, plan, operation, ex);
+            } catch (IOException historyFailure) {
+                AppLog.error("history.apply_failure_record_failed", Map.of("planId", AppLog.shortId(plan.id())), historyFailure);
+            }
+        } finally {
+            tagApplicationInProgress = false;
+        }
+    }
+
+    private void updateApplyProgress(OperationJob job, PlanApplyOperation operation) {
+        List<PlanApplyOperation.Step> steps = operation.steps();
+        int total = steps.stream().mapToInt(step -> step.assetIds().size()).sum();
+        int completed = steps.stream().mapToInt(step -> step.state() == PlanApplyOperation.StepState.COMPLETE
+                ? step.assetIds().size() : step.affectedAssets()).sum();
+        PlanApplyOperation.Step active = steps.stream()
+                .filter(step -> step.state() == PlanApplyOperation.StepState.RUNNING).findFirst().orElse(null);
+        String phase = active == null ? "Preparing tag application" : describeApplyStep(active);
+        String message = active == null
+                ? "Preparing " + steps.size() + " tag and Album steps..."
+                : active.affectedAssets() + " of " + active.assetIds().size() + " assets acknowledged for this step.";
+        job.progress(phase, message, completed, total);
+    }
+
+    private String describeApplyStep(PlanApplyOperation.Step step) {
+        return (step.mutation() == PlanApplyOperation.Mutation.ADD ? "Adding" : "Removing") + " "
+                + step.resource().name().toLowerCase() + " '" + step.tag() + "' on the "
+                + step.account().toLowerCase() + " account";
     }
 
     private String statusJson() {
@@ -636,6 +782,9 @@ public final class PhotoCullServer {
         values.put("accessProtected", accessProtected());
         if (scanJob != null) {
             values.put("scanJob", scanJob.json());
+        }
+        if (operationJob != null) {
+            values.put("operationJob", operationJob.json());
         }
         if (session != null) {
             values.put("session", sessionSummary(session));
@@ -867,6 +1016,7 @@ public final class PhotoCullServer {
     }
 
     private void restorePersistedState() {
+        AppLog.info("state.restore_started", Map.of("configDirectory", configDir.toString()));
         try {
             try {
                 SessionStore.StoredState stored = sessionStore.load(this::schedulePersistState);
@@ -874,24 +1024,29 @@ public final class PhotoCullServer {
                 scanJob = stored.job();
                 if (scanJob != null) {
                     scanJob.interrupt();
+                    AppLog.warn("scan.interrupted_by_restart", Map.of("scanId", AppLog.shortId(scanJob.id())));
                 }
+                AppLog.info("state.session_restored", Map.of("hasSession", session != null, "hasScanJob", scanJob != null));
             } catch (Exception ex) {
-                System.err.println("Ignoring unreadable persisted scan state: " + ex.getMessage());
+                AppLog.error("state.session_restore_failed", Map.of("action", "ignoring unreadable persisted scan state"), ex);
             }
             try {
                 activePlan = planStore.loadActive().orElse(null);
                 if (activePlan != null && !activePlan.matches(session, immichConfig)) {
+                    AppLog.warn("plan.invalidated_on_restore", Map.of("planId", AppLog.shortId(activePlan.id())));
                     invalidateActivePlan();
                 } else if (activePlan != null) {
                     activeOperation = planStore.loadOperation(activePlan).orElse(null);
                 }
+                AppLog.info("state.plan_restored", Map.of("hasPlan", activePlan != null, "hasOperation", activeOperation != null));
             } catch (Exception ex) {
                 activePlan = null;
                 activeOperation = null;
-                System.err.println("Ignoring unreadable persisted tag plan state: " + ex.getMessage());
+                AppLog.error("state.plan_restore_failed", Map.of("action", "ignoring unreadable persisted tag plan state"), ex);
             }
         } finally {
             stateRestoreInProgress = false;
+            AppLog.info("state.restore_completed", Map.of("hasSession", session != null, "hasPlan", activePlan != null));
         }
     }
 
@@ -900,6 +1055,9 @@ public final class PhotoCullServer {
     }
 
     private void invalidateActivePlan() throws IOException {
+        if (activePlan != null) {
+            AppLog.info("plan.invalidated", Map.of("planId", AppLog.shortId(activePlan.id())));
+        }
         activePlan = null;
         activeOperation = null;
         planStore.clearActive();
@@ -933,6 +1091,10 @@ public final class PhotoCullServer {
         return values;
     }
 
+    private long permissionFailures(ImmichPermissionReport.Account account) {
+        return account.checks().stream().filter(check -> check.state() == ImmichPermissionReport.State.FAIL).count();
+    }
+
     private String applyResultJson(ImmichTagApplyResult result, PlanApplyOperation operation) {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("keeperAssets", result.keeperAssets());
@@ -960,6 +1122,10 @@ public final class PhotoCullServer {
         return scanJob != null && "RUNNING".equals(scanJob.json().get("state"));
     }
 
+    private boolean operationRunning() {
+        return operationJob != null && operationJob.running();
+    }
+
     private void schedulePersistState() {
         synchronized (persistenceLock) {
             if (pendingPersistence != null) {
@@ -982,6 +1148,7 @@ public final class PhotoCullServer {
             }
         }
         sessionStore.save(session, scanJob);
+        AppLog.debug("state.persisted", Map.of("mode", "immediate", "hasSession", session != null, "hasScanJob", scanJob != null));
     }
 
     private void flushPersistedState() {
@@ -997,13 +1164,32 @@ public final class PhotoCullServer {
         }
         persistStateNow();
         persistenceExecutor.shutdown();
+        AppLog.info("state.flush_completed", Map.of());
     }
 
     private void persistStateNow() {
         try {
             sessionStore.save(session, scanJob);
+            AppLog.debug("state.persisted", Map.of("mode", "scheduled", "hasSession", session != null, "hasScanJob", scanJob != null));
         } catch (IOException ex) {
-            System.err.println("Could not persist scan state: " + ex.getMessage());
+            AppLog.error("state.persist_failed", Map.of("hasSession", session != null, "hasScanJob", scanJob != null), ex);
+        }
+    }
+
+    private void logHealth() {
+        try {
+            Runtime runtime = Runtime.getRuntime();
+            Map<String, Object> health = new LinkedHashMap<>();
+            health.put("heapUsedBytes", runtime.totalMemory() - runtime.freeMemory());
+            health.put("heapMaxBytes", runtime.maxMemory());
+            health.put("threadCount", Thread.activeCount());
+            health.put("configFreeBytes", Files.getFileStore(configDir).getUsableSpace());
+            health.put("configTotalBytes", Files.getFileStore(configDir).getTotalSpace());
+            health.put("scanRunning", scanRunning());
+            health.put("tagApplicationInProgress", tagApplicationInProgress);
+            AppLog.info("application.health", health);
+        } catch (IOException ex) {
+            AppLog.error("application.health_failed", Map.of("configDirectory", configDir.toString()), ex);
         }
     }
 
@@ -1036,6 +1222,7 @@ public final class PhotoCullServer {
             return true;
         }
         send(exchange, 401, "application/json", error("Access token required."));
+        AppLog.warn("security.authentication_failed", requestFields(exchange));
         return false;
     }
 
@@ -1069,6 +1256,36 @@ public final class PhotoCullServer {
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(bytes);
+        }
+        logHttpResponse(exchange, status, bytes.length, false);
+    }
+
+    private Map<String, Object> requestFields(HttpExchange exchange) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("requestId", AppLog.shortId(String.valueOf(exchange.getAttribute("pca.requestId"))));
+        values.put("method", exchange.getRequestMethod());
+        values.put("path", exchange.getRequestURI().getPath());
+        values.put("remoteAddress", exchange.getRemoteAddress() == null || exchange.getRemoteAddress().getAddress() == null
+                ? "" : exchange.getRemoteAddress().getAddress().getHostAddress());
+        return values;
+    }
+
+    private void logHttpResponse(HttpExchange exchange, int status, int responseBytes, boolean thumbnail) {
+        Map<String, Object> values = requestFields(exchange);
+        Object startedAt = exchange.getAttribute("pca.startedAtNanos");
+        if (startedAt instanceof Long started) {
+            values.put("durationMillis", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+        }
+        values.put("status", status);
+        values.put("responseBytes", responseBytes);
+        if (thumbnail && status < 400) {
+            AppLog.debug("http.thumbnail", values);
+        } else if (status >= 500) {
+            AppLog.error("http.request", values, null);
+        } else if (status >= 400) {
+            AppLog.warn("http.request", values);
+        } else {
+            AppLog.info("http.request", values);
         }
     }
 }

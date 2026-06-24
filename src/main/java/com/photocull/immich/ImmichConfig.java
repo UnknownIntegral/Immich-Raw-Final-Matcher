@@ -1,5 +1,6 @@
 package com.photocull.immich;
 
+import com.photocull.server.AppLog;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -182,8 +183,14 @@ public record ImmichConfig(
         }
         try {
             int parsed = Integer.parseInt(value);
-            return Math.max(min, Math.min(max, parsed));
+            int bounded = Math.max(min, Math.min(max, parsed));
+            if (bounded != parsed) {
+                AppLog.warn("configuration.value_clamped", Map.of("name", key, "provided", parsed, "effective", bounded,
+                        "minimum", min, "maximum", max));
+            }
+            return bounded;
         } catch (NumberFormatException ignored) {
+            AppLog.warn("configuration.invalid_number", Map.of("name", key, "effective", fallback));
             return fallback;
         }
     }

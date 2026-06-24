@@ -104,7 +104,7 @@ public final class MatchEngine {
             }
 
             processed++;
-            if (processed % 500 == 0) {
+            if (processed % 500 == 0 || processed == finishedFiles.size()) {
                 progress.accept("Matched " + processed + " of " + finishedFiles.size() + " finished images...");
             }
         }

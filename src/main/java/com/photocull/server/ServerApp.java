@@ -2,6 +2,9 @@ package com.photocull.server;
 
 import com.photocull.immich.ImmichConfig;
 
+import java.nio.file.Files;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
 public final class ServerApp {
@@ -12,7 +15,22 @@ public final class ServerApp {
         int port = readPort();
         var configDir = AppPaths.configDir();
         AppLog.install(configDir);
-        PhotoCullServer server = new PhotoCullServer(port, configDir, ImmichConfig.fromEnvironment());
+        ImmichConfig config = ImmichConfig.fromEnvironment();
+        Map<String, Object> startup = new LinkedHashMap<>();
+        startup.put("port", port);
+        startup.put("configDirectory", configDir.toString());
+        startup.put("configDirectoryWritable", Files.isWritable(configDir));
+        startup.put("immichConfigured", config.isConfigured());
+        startup.put("missingConfiguration", config.missingFields());
+        startup.put("pageSize", config.pageSize());
+        startup.put("maxPages", config.maxPages());
+        startup.put("requestTimeoutSeconds", config.requestTimeoutSeconds());
+        startup.put("requestRetryAttempts", config.requestRetryAttempts());
+        startup.put("mutationBatchSize", config.mutationBatchSize());
+        startup.put("accessTokenConfigured", System.getenv("PCA_ACCESS_TOKEN") != null && !System.getenv("PCA_ACCESS_TOKEN").isBlank());
+        startup.put("javaVersion", System.getProperty("java.version"));
+        AppLog.info("application.starting", startup);
+        PhotoCullServer server = new PhotoCullServer(port, configDir, config);
         server.start();
         System.out.println("Photo Culling Assistant web UI running at http://localhost:" + port
                 + "; persistent logs are in " + configDir.resolve("logs") + " (seven-day retention).");

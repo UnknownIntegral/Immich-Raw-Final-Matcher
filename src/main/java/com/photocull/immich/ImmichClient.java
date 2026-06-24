@@ -1,5 +1,6 @@
 package com.photocull.immich;
 
+import com.photocull.server.AppLog;
 import com.photocull.server.Json;
 
 import java.io.IOException;
@@ -231,7 +232,7 @@ public final class ImmichClient implements ImmichApi {
         try {
             uri = URI.create(target);
         } catch (IllegalArgumentException ex) {
-            throw requestFailure(method, path, target, ex, 1);
+            throw requestFailure(method, path, ex, 1);
         }
 
         HttpRequest.Builder request = HttpRequest.newBuilder(uri)
@@ -251,32 +252,37 @@ public final class ImmichClient implements ImmichApi {
         int attempts = retryAttemptsFor(method);
         IOException lastFailure = null;
         for (int attempt = 1; attempt <= attempts; attempt++) {
+            long startedAt = System.nanoTime();
             try {
                 HttpResponse<String> response = http.send(builtRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
                 int status = response.statusCode();
                 if (status >= 200 && status < 300) {
+                    AppLog.debug("immich.request", requestFields(method, path, attempt, status, System.nanoTime() - startedAt));
                     return response.body();
                 }
                 if (isTransientStatus(status) && attempt < attempts) {
+                    AppLog.warn("immich.request_retry", requestFields(method, path, attempt, status, System.nanoTime() - startedAt));
                     waitBeforeRetry(attempt);
                     continue;
                 }
-                throw httpFailure(method, path, target, status, response.body(), attempt);
+                AppLog.warn("immich.request_failed", requestFields(method, path, attempt, status, System.nanoTime() - startedAt));
+                throw httpFailure(method, path, status, attempt);
             } catch (IOException ex) {
                 if (ex instanceof HttpResponseFailure) {
                     throw ex;
                 }
                 lastFailure = ex;
                 if (attempt < attempts) {
+                    AppLog.warn("immich.request_retry", requestFields(method, path, attempt, null, System.nanoTime() - startedAt));
                     waitBeforeRetry(attempt);
                     continue;
                 }
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
-                throw requestFailure(method, path, target, ex, attempt);
+                throw requestFailure(method, path, ex, attempt);
             }
         }
-        throw requestFailure(method, path, target, lastFailure, attempts);
+        throw requestFailure(method, path, lastFailure, attempts);
     }
 
     private byte[] sendBytes(String method, String path) throws IOException, InterruptedException {
@@ -286,7 +292,7 @@ public final class ImmichClient implements ImmichApi {
         try {
             uri = URI.create(target);
         } catch (IllegalArgumentException ex) {
-            throw requestFailure(method, path, target, ex, 1);
+            throw requestFailure(method, path, ex, 1);
         }
         HttpRequest request = HttpRequest.newBuilder(uri)
                 .version(HttpClient.Version.HTTP_1_1)
@@ -298,32 +304,37 @@ public final class ImmichClient implements ImmichApi {
         int attempts = retryAttemptsFor(method);
         IOException lastFailure = null;
         for (int attempt = 1; attempt <= attempts; attempt++) {
+            long startedAt = System.nanoTime();
             try {
                 HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
                 int status = response.statusCode();
                 if (status >= 200 && status < 300) {
+                    AppLog.debug("immich.thumbnail_request", requestFields(method, path, attempt, status, System.nanoTime() - startedAt));
                     return response.body();
                 }
                 if (isTransientStatus(status) && attempt < attempts) {
+                    AppLog.warn("immich.thumbnail_retry", requestFields(method, path, attempt, status, System.nanoTime() - startedAt));
                     waitBeforeRetry(attempt);
                     continue;
                 }
-                throw httpFailure(method, path, target, status, "", attempt);
+                AppLog.warn("immich.thumbnail_failed", requestFields(method, path, attempt, status, System.nanoTime() - startedAt));
+                throw httpFailure(method, path, status, attempt);
             } catch (IOException ex) {
                 if (ex instanceof HttpResponseFailure) {
                     throw ex;
                 }
                 lastFailure = ex;
                 if (attempt < attempts) {
+                    AppLog.warn("immich.thumbnail_retry", requestFields(method, path, attempt, null, System.nanoTime() - startedAt));
                     waitBeforeRetry(attempt);
                     continue;
                 }
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
-                throw requestFailure(method, path, target, ex, attempt);
+                throw requestFailure(method, path, ex, attempt);
             }
         }
-        throw requestFailure(method, path, target, lastFailure, attempts);
+        throw requestFailure(method, path, lastFailure, attempts);
     }
 
     private int retryAttemptsFor(String method) {
@@ -343,10 +354,10 @@ public final class ImmichClient implements ImmichApi {
         Thread.sleep(delayMillis);
     }
 
-    private IOException httpFailure(String method, String path, String target, int status, String body, int attempts) {
+    private IOException httpFailure(String method, String path, int status, int attempts) {
         String suffix = attempts > 1 ? " after " + attempts + " attempts" : "";
-        return new HttpResponseFailure("Immich API " + method + " " + path + " (" + target + ") failed with HTTP "
-                + status + suffix + (body == null || body.isBlank() ? "" : ": " + body));
+        return new HttpResponseFailure("Immich API " + method + " " + endpointLabel(path) + " failed with HTTP "
+                + status + suffix);
     }
 
     private static final class HttpResponseFailure extends IOException {
@@ -355,14 +366,46 @@ public final class ImmichClient implements ImmichApi {
         }
     }
 
-    private IOException requestFailure(String method, String path, String target, Exception ex, int attempts) {
+    private IOException requestFailure(String method, String path, Exception ex, int attempts) {
         String message = ex.getMessage();
         if (message == null || message.isBlank()) {
             message = "(no message)";
         }
         String suffix = attempts > 1 ? " after " + attempts + " attempts" : "";
-        return new IOException("Immich API " + method + " " + path + " (" + target + ") failed" + suffix
+        return new IOException("Immich API " + method + " " + endpointLabel(path) + " failed" + suffix
                 + " before receiving a response: " + ex.getClass().getName() + ": " + message, ex);
+    }
+
+    private Map<String, Object> requestFields(String method, String path, int attempt, Integer status, long durationNanos) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("account", account());
+        values.put("method", method);
+        values.put("path", endpointLabel(path));
+        values.put("attempt", attempt);
+        values.put("durationMillis", Duration.ofNanos(durationNanos).toMillis());
+        if (status != null) {
+            values.put("status", status);
+        }
+        return values;
+    }
+
+    private String account() {
+        if (apiKey.equals(config.effectiveRawApiKey())) {
+            return "raw";
+        }
+        if (apiKey.equals(config.effectiveFinalApiKey())) {
+            return "final";
+        }
+        return "lookup";
+    }
+
+    private String endpointLabel(String path) {
+        try {
+            URI base = URI.create(config.apiUrl());
+            return base.getScheme() + "://" + base.getHost() + (base.getPort() < 0 ? "" : ":" + base.getPort()) + path;
+        } catch (Exception ignored) {
+            return path;
+        }
     }
 
     private void requireApiConfigured() {

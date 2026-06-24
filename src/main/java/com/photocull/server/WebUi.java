@@ -125,7 +125,7 @@ public final class WebUi {
                         await new Promise(resolve => setTimeout(resolve, 900));
                         const response = await apiFetch('/api/immich/scan/status'); const data = await response.json();
                         if (!response.ok) throw new Error(data.error || 'Could not read scan status');
-                        const job = data.job; showProgress(job.message, job.percent);
+                        const job = data.job; showJobProgress(job);
                         if (job.state === 'FAILED') throw new Error(job.error || 'Scan failed');
                         if (job.state === 'COMPLETE') { await loadSession(); await refreshReview(); hideProgress(); setBusy(false); message('Immich scan complete.'); return; }
                       }
@@ -155,9 +155,9 @@ public final class WebUi {
                       } catch (error) { if (request === reviewRequest) message(error.message); }
                     }
                     async function writeDryRun() {
-                      setBusy(true); hideTagApplySuccess(); message('Freezing dry-run plan...');
-                      try { const response=await apiFetch('/api/dry-run',{method:'POST'}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Dry-run failed'); state.tagPlan=data.tagPlan; state.finalTagPlan=data.finalTagPlan||[]; if(state.session) state.session.activePlan=data.plan||null; render(); message(data.plan ? `Approved plan ${data.plan.id}.` : 'Dry-run plan approved.'); }
-                      catch(error){message(error.message);} finally{setBusy(false);}
+                      setBusy(true); hideTagApplySuccess(); showProgress('Preparing dry-run plan...',-1); message('');
+                      try { const response=await apiFetch('/api/dry-run',{method:'POST'}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Dry-run failed'); if(data.job) await pollOperation('DRY_RUN'); else hideProgress(); await loadSession(); await loadTagPlan(); message('Dry-run plan approved.'); }
+                      catch(error){message(error.message);hideProgress();} finally{setBusy(false);}
                     }
                     async function checkPermissions() {
                       if (!state.session) { message('Run a scan before testing Immich API-key permissions.'); return; }
@@ -170,9 +170,9 @@ public final class WebUi {
                       const plan=state.session?.activePlan;
                       if (!plan) { message('Approve a dry-run plan before applying tags.'); return; }
                       if (!confirm(`Apply immutable plan ${plan.id}? This first removes every PCA-managed tag from the scanned assets, then applies the current tag plan and adds assets to PCA Albums. Display-name renaming remains disabled until Immich exposes a safe API.`)) return;
-                      setBusy(true); message('Applying Immich tags and Albums...');
-                      try { const response=await apiFetch('/api/immich/apply-tags',{method:'POST',body:new URLSearchParams({planId:plan.id})}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Plan application failed'); if(state.session?.activePlan) state.session.activePlan.operation=data.operation; render(); const detail=`Tags applied successfully: ${data.keeperTagged}/${data.keeperAssets} Keeper, ${data.unusedTagged}/${data.unusedAssets} not used, ${data.finalNotFoundTagged}/${data.finalNotFoundAssets} Final not found.`; showTagApplySuccess(detail); message(''); }
-                      catch(error){message(error.message);} finally{setBusy(false);}
+                      setBusy(true); showProgress('Preparing Immich tag application...',-1); message('');
+                      try { const response=await apiFetch('/api/immich/apply-tags',{method:'POST',body:new URLSearchParams({planId:plan.id})}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Plan application failed'); await pollOperation('TAG_APPLICATION'); await loadSession(); render(); showTagApplySuccess('Tags and Albums applied successfully.'); message(''); }
+                      catch(error){message(error.message);hideProgress();} finally{setBusy(false);}
                     }
                     async function clearReviewCache() {
                       if (busy) return;
@@ -282,12 +282,26 @@ public final class WebUi {
                     function observeThumbnails(scrollRoot,content){thumbnailObservers.get(scrollRoot)?.disconnect();const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(!entry.isIntersecting)continue;observer.unobserve(entry.target);loadThumbnail(entry.target);}}, {root:scrollRoot,threshold:0});thumbnailObservers.set(scrollRoot,observer);for(const image of content.querySelectorAll('img[data-asset-id]')){const id=image.dataset.assetId;if(thumbs.has(id)){image.src=thumbs.get(id);continue;}observer.observe(image);}}
                     async function loadThumbnail(image){const id=image.dataset.assetId;if(!id)return;let request=thumbnailRequests.get(id);if(!request){request=apiFetch('/api/immich/thumbnail?assetId='+encodeURIComponent(id)).then(response=>{if(!response.ok)throw new Error();return response.blob();}).then(blob=>{const url=URL.createObjectURL(blob);thumbs.set(id,url);return url;}).finally(()=>thumbnailRequests.delete(id));thumbnailRequests.set(id,request);}try{const url=await request;document.querySelectorAll(`img[data-asset-id="${CSS.escape(id)}"]`).forEach(img=>img.src=url);}catch{image.alt='Preview unavailable';}}
                     function showTab(tab){activeTab=tab;['review','matches','tagPlan','finalTagPlan','history'].forEach(name=>{$(name+'Tab').classList.toggle('active',name===tab);$(name+'View').style.display=name===tab?'':'none';});renderActiveTab();if(tab==='review'&&!state.reviewRows.length)void refreshReview();if(tab==='matches'&&!state.matches.length)void loadMatches();if((tab==='tagPlan'||tab==='finalTagPlan')&&state.tagPlan===null)void loadTagPlan();if(tab==='history')void loadHistory();}
+                    async function pollOperation(kind) {
+                      while (true) {
+                        await new Promise(resolve=>setTimeout(resolve,500));
+                        const response=await apiFetch('/api/operation/status'); const data=await response.json();
+                        if(!response.ok) throw new Error(data.error||'Could not read operation status');
+                        const job=data.job; if(job.kind!==kind) throw new Error('A different operation is now active. Refresh the page.');
+                        showJobProgress(job);
+                        if(job.state==='FAILED') throw new Error(job.error||'Operation failed');
+                        if(job.state==='COMPLETE'){hideProgress();return job;}
+                      }
+                    }
+                    function showJobProgress(job){showProgress(progressLabel(job),job.percent);}
+                    function progressLabel(job){const counts=job.total>0?` (${job.completed||0}/${job.total})`:job.completed>0?` (${job.completed} processed)`:'';const elapsed=formatDuration(job.elapsedMillis);const eta=formatDuration(job.estimatedRemainingMillis);const timing=[elapsed&&`elapsed ${elapsed}`,eta&&`about ${eta} remaining`].filter(Boolean).join(' — ');return `${job.phase||'Working'}: ${job.message||'Working...'}${counts}${timing?' — '+timing:''}`;}
+                    function formatDuration(milliseconds){if(!Number.isFinite(milliseconds)||milliseconds<1000)return '';const seconds=Math.round(milliseconds/1000);return seconds<60?`${seconds}s`:seconds<3600?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${Math.floor(seconds/3600)}h ${Math.floor(seconds%3600/60)}m`;}
                     function showProgress(text,percent){$('progressShell').hidden=false;$('progressText').textContent=text||'Working...';const bar=$('progress');bar.classList.toggle('indeterminate',percent==null||percent<0);bar.firstElementChild.style.width=percent>=0?percent+'%':'';}
                     function hideProgress(){$('progressShell').hidden=true;}
                     function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan;$('permissionCheckButton').disabled=value||!state.session;$('clearCacheButton').disabled=value;if(activeTab==='review')renderReview();}
                     async function apiFetch(url,options={},retry=true){const headers=new Headers(options.headers||{});const token=localStorage.getItem('pcaAccessToken');if(token)headers.set('X-PCA-Token',token);const response=await fetch(url,{...options,headers});if(response.status===401&&retry){const entered=prompt('Access token');if(entered!==null){localStorage.setItem('pcaAccessToken',entered);return apiFetch(url,options,false);}}return response;}
                     async function loadAppStatus(){const response=await apiFetch('/api/status');const status=await response.json();if(!response.ok)throw new Error(status.error||'Could not read app status');return status;}
-                    async function restoreOnLoad(){try{message('Checking saved session...');let status=await loadAppStatus();if(status.stateRestoring){setBusy(true);message('Restoring saved session data...');while(status.stateRestoring){await new Promise(resolve=>setTimeout(resolve,300));status=await loadAppStatus();}setBusy(false);}state.permissions=status.permissions||null;if(status.hasSession){useSession(status.session);await refreshReview();}else{renderPermissions();}const job=status.scanJob;if(job?.state==='RUNNING'){setBusy(true);showProgress(job.message,job.percent);await pollScan();}else if(job?.state==='INTERRUPTED'){message(job.error||job.message);}else{message('');}}catch(error){setBusy(false);message(error.message);}}
+                    async function restoreOnLoad(){try{message('Checking saved session...');let status=await loadAppStatus();if(status.stateRestoring){setBusy(true);message('Restoring saved session data...');while(status.stateRestoring){await new Promise(resolve=>setTimeout(resolve,300));status=await loadAppStatus();}setBusy(false);}state.permissions=status.permissions||null;if(status.hasSession){useSession(status.session);await refreshReview();}else{renderPermissions();}const scan=status.scanJob;const operation=status.operationJob;if(scan?.state==='RUNNING'){setBusy(true);showJobProgress(scan);await pollScan();}else if(operation?.state==='RUNNING'){setBusy(true);showJobProgress(operation);await pollOperation(operation.kind);await loadSession();await loadTagPlan();setBusy(false);}else if(scan?.state==='INTERRUPTED'){message(scan.error||scan.message);}else{message('');}}catch(error){setBusy(false);message(error.message);}}
                     render(); restoreOnLoad();
                   </script>
                 </body>

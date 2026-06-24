@@ -604,7 +604,7 @@ public final class Tests {
     }
 
     private static void scansRawAndFinalAssetsWithSeparateClients() throws IOException, InterruptedException {
-        RecordingImmichApi rawApi = new RecordingImmichApi(List.of(asset("raw-asset", "raw-user", "IMG_0001.CR3")));
+        RecordingImmichApi rawApi = new RecordingImmichApi(List.of(asset("raw-asset", "raw-user", "IMG_0001.tif")));
         RecordingImmichApi finalApi = new RecordingImmichApi(List.of(asset("final-asset", "final-user", "IMG_0001.jpg")));
         ImmichWorkflow workflow = new ImmichWorkflow(config("raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
 
