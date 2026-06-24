@@ -53,6 +53,8 @@ public final class Tests {
         autoAcceptsUniqueExactTimestamp();
         autoAcceptsExactTimestampWithOtherCandidates();
         updatesCachedSessionMetricsDuringReview();
+        keepsUnusedAndFinalNotFoundDecisionsCorrectWithDateIndex();
+        validatesApprovedPlanFromSessionRevision();
         acceptsReviewerSelectedAlternativeCandidate();
         recordsDurableDecisionHistory();
         undoesLastReviewDecision();
@@ -349,6 +351,49 @@ public final class Tests {
         assertEquals(2L, session.noRawCount(), "no RAW count after rejection");
         assertEquals(1L, session.tagPlan().stream().filter(item -> item.tag().equals("not used")).count(), "tag plan unused count");
         assertEquals(1L, session.finalTagPlan().stream().filter(item -> item.tag().equals("RAW Found")).count(), "tag plan RAW found count");
+    }
+
+    private static void keepsUnusedAndFinalNotFoundDecisionsCorrectWithDateIndex() {
+        Instant firstDay = Instant.parse("2024-01-01T10:00:00Z");
+        Instant secondDay = Instant.parse("2024-01-02T10:00:00Z");
+        PhotoFile sameDayRaw = PhotoFile.fromImmichAsset("raw-same-day", "raw-owner", "IMG_0001.CR3", "/raw/IMG_0001.CR3", 1,
+                firstDay, firstDay, "", "");
+        PhotoFile missingRaw = PhotoFile.fromImmichAsset("raw-missing", "raw-owner", "IMG_0002.CR3", "/raw/IMG_0002.CR3", 1,
+                secondDay, secondDay, "", "");
+        PhotoFile finalImage = PhotoFile.fromImmichAsset("final-1", "final-owner", "EXPORT.jpg", "/final/EXPORT.jpg", 1,
+                firstDay, firstDay, "", "");
+        ScanSession session = new ScanSession(
+                List.of(sameDayRaw, missingRaw),
+                List.of(finalImage),
+                List.of(new MatchResult(finalImage, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null)),
+                90,
+                50
+        );
+
+        List<TagPlanItem> plan = session.tagPlan();
+        assertEquals("not used", plan.stream().filter(item -> item.rawAssetId().equals("raw-same-day")).findFirst().orElseThrow().tag(),
+                "same-day RAW is unused");
+        assertEquals("Final not found", plan.stream().filter(item -> item.rawAssetId().equals("raw-missing")).findFirst().orElseThrow().tag(),
+                "RAW with no final date is final-not-found");
+    }
+
+    private static void validatesApprovedPlanFromSessionRevision() {
+        PhotoFile raw = photo("plan-raw", "raw-owner", "IMG_0001.CR3");
+        PhotoFile finalImage = photo("plan-final", "final-owner", "IMG_0001.jpg");
+        ScanSession session = new ScanSession(
+                List.of(raw),
+                List.of(finalImage),
+                List.of(new MatchResult(finalImage, raw, 80, "review", MatchStatus.NEEDS_REVIEW, null)),
+                90,
+                50
+        );
+        session.updateStatus(0, MatchStatus.ACCEPTED);
+        ImmutableTagPlan plan = ImmutableTagPlan.fromSession(session, config("raw-key", "final-key"));
+
+        assertEquals(session.revision(), plan.sessionRevision(), "plan stores session revision");
+        assertTrue(plan.matches(session, config("raw-key", "final-key")), "matching revision keeps approved plan valid");
+        session.undoLastReviewDecision();
+        assertEquals(false, plan.matches(session, config("raw-key", "final-key")), "changed revision invalidates approved plan");
     }
 
     private static void acceptsReviewerSelectedAlternativeCandidate() {

@@ -29,6 +29,7 @@ final class FilenamePlanner {
 
     static Map<String, String> plan(ScanSession session) {
         Map<String, PhotoFile> rawForFinal = acceptedRawByFinal(session.results());
+        Map<String, PhotoFile> rawsById = rawsById(session.raws());
         Map<String, String> names = new LinkedHashMap<>();
         Map<LocalDate, Integer> nextFinal = new HashMap<>();
 
@@ -45,7 +46,7 @@ final class FilenamePlanner {
         Map<String, String> finalForRaw = finalByRaw(rawForFinal);
         Map<LocalDate, Set<Integer>> occupiedRawSequences = new HashMap<>();
         for (Map.Entry<String, String> entry : finalForRaw.entrySet()) {
-            PhotoFile raw = rawById(session.raws(), entry.getKey());
+            PhotoFile raw = rawById(rawsById, entry.getKey());
             String matchingFinalName = names.get(entry.getValue());
             names.put(requiredAssetId(raw), matchingFinalName.substring(0, matchingFinalName.lastIndexOf('.') + 1) + extension(raw));
             occupiedRawSequences.computeIfAbsent(dateFor(raw, raw), ignored -> new HashSet<>())
@@ -58,14 +59,16 @@ final class FilenamePlanner {
                         .thenComparing(PhotoFile::lastModified)
                         .thenComparing(FilenamePlanner::requiredAssetId))
                 .toList();
+        Map<LocalDate, Integer> nextRawSequence = new HashMap<>();
         for (PhotoFile raw : unmatchedRaws) {
             LocalDate day = dateFor(raw, raw);
             Set<Integer> occupied = occupiedRawSequences.computeIfAbsent(day, ignored -> new HashSet<>());
-            int sequence = 1;
+            int sequence = nextRawSequence.getOrDefault(day, 1);
             while (occupied.contains(sequence)) {
                 sequence++;
             }
             occupied.add(sequence);
+            nextRawSequence.put(day, sequence + 1);
             names.put(requiredAssetId(raw), filename(day, sequence, raw));
         }
         return Map.copyOf(names);
@@ -93,9 +96,20 @@ final class FilenamePlanner {
         return result;
     }
 
-    private static PhotoFile rawById(List<PhotoFile> raws, String id) {
-        return raws.stream().filter(raw -> id.equals(raw.immichAssetId())).findFirst()
-                .orElseThrow(() -> new IllegalStateException("Accepted RAW is missing from the scan session."));
+    private static Map<String, PhotoFile> rawsById(List<PhotoFile> raws) {
+        Map<String, PhotoFile> byId = new HashMap<>();
+        for (PhotoFile raw : raws) {
+            byId.put(requiredAssetId(raw), raw);
+        }
+        return byId;
+    }
+
+    private static PhotoFile rawById(Map<String, PhotoFile> rawsById, String id) {
+        PhotoFile raw = rawsById.get(id);
+        if (raw == null) {
+            throw new IllegalStateException("Accepted RAW is missing from the scan session.");
+        }
+        return raw;
     }
 
     private static LocalDate dateFor(PhotoFile preferred, PhotoFile fallback) {

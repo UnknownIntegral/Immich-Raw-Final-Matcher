@@ -30,6 +30,7 @@ public final class ScanSession {
     private final Set<Path> duplicateRawPaths;
     private final Set<Path> possibleDuplicateRawPaths;
     private final Map<Path, Integer> rawRowsByPath;
+    private final Map<Path, Boolean> rawHasFinalOnCaptureDate;
     private final Map<Path, Integer> acceptedByRaw = new HashMap<>();
     private final Map<Path, Integer> unresolvedByRaw = new HashMap<>();
     private long reviewCount;
@@ -39,6 +40,7 @@ public final class ScanSession {
     private long rawFoundCount;
     private long noRawCount;
     private Integer lastReviewDecisionIndex;
+    private long revision;
 
     public ScanSession(List<PhotoFile> raws, List<PhotoFile> finals, List<MatchResult> results, int threshold) {
         this(raws, finals, results, threshold, 0);
@@ -61,9 +63,11 @@ public final class ScanSession {
             List<MatchResult> results,
             int autoAcceptThreshold,
             int autoRejectThreshold,
-            int lastReviewDecisionIndex
+            int lastReviewDecisionIndex,
+            long revision
     ) {
         ScanSession session = new ScanSession(createdAt, raws, finals, results, autoAcceptThreshold, autoRejectThreshold);
+        session.revision = Math.max(0, revision);
         if (lastReviewDecisionIndex >= 0 && lastReviewDecisionIndex < session.results.size()) {
             MatchStatus status = session.results.get(lastReviewDecisionIndex).status();
             if (status == MatchStatus.ACCEPTED || status == MatchStatus.REJECTED) {
@@ -94,6 +98,7 @@ public final class ScanSession {
         this.duplicateRawPaths = Set.copyOf(duplicatePaths(this.raws, true));
         this.possibleDuplicateRawPaths = Set.copyOf(duplicatePaths(this.raws, false));
         this.rawRowsByPath = pathCounts(this.raws);
+        this.rawHasFinalOnCaptureDate = rawHasFinalOnCaptureDate(this.raws, this.finals);
         initializeMetrics();
     }
 
@@ -177,6 +182,7 @@ public final class ScanSession {
         if (status == MatchStatus.ACCEPTED || status == MatchStatus.REJECTED) {
             lastReviewDecisionIndex = index;
         }
+        revision++;
         return updated;
     }
 
@@ -210,6 +216,7 @@ public final class ScanSession {
             updateUnusedCount(rawPath, wasUnused);
         }
         lastReviewDecisionIndex = null;
+        revision++;
         return restored;
     }
 
@@ -219,6 +226,11 @@ public final class ScanSession {
 
     public synchronized Integer lastReviewDecisionIndex() {
         return lastReviewDecisionIndex;
+    }
+
+    /** Monotonic session state marker used to validate an approved plan without rebuilding it. */
+    public synchronized long revision() {
+        return revision;
     }
 
     public synchronized List<TagPlanItem> tagPlan() {
@@ -262,7 +274,7 @@ public final class ScanSession {
                         keeper.score()
                 ));
             } else if (!unresolvedRawPaths.contains(raw.path())) {
-                boolean finalExistsOnCaptureDate = finals.stream().anyMatch(finalImage -> sameCaptureDate(raw, finalImage));
+                boolean finalExistsOnCaptureDate = rawHasFinalOnCaptureDate.getOrDefault(raw.path(), false);
                 String tag = finalExistsOnCaptureDate ? unusedTag : finalNotFoundTag;
                 String basis = finalExistsOnCaptureDate
                         ? "final image exists on the RAW capture date but no accepted image match"
@@ -441,8 +453,7 @@ public final class ScanSession {
         if (acceptedByRaw.getOrDefault(rawPath, 0) != 0 || unresolvedByRaw.getOrDefault(rawPath, 0) != 0) {
             return false;
         }
-        return raws.stream().filter(raw -> raw.path().equals(rawPath))
-                .anyMatch(raw -> finals.stream().anyMatch(finalImage -> sameCaptureDate(raw, finalImage)));
+        return rawHasFinalOnCaptureDate.getOrDefault(rawPath, false);
     }
 
     private static boolean sameCaptureDate(PhotoFile first, PhotoFile second) {
@@ -481,6 +492,23 @@ public final class ScanSession {
             counts.merge(file.path(), 1, Integer::sum);
         }
         return counts;
+    }
+
+    /**
+     * Precomputes the date relationship used by unused/raw-not-found decisions.
+     * Rechecking this relationship by scanning all finals for every RAW made
+     * restoring a large saved session quadratic.
+     */
+    private static Map<Path, Boolean> rawHasFinalOnCaptureDate(List<PhotoFile> raws, List<PhotoFile> finals) {
+        Set<LocalDate> finalCaptureDates = new HashSet<>();
+        for (PhotoFile finalImage : finals) {
+            finalCaptureDates.add(captureDate(finalImage));
+        }
+        Map<Path, Boolean> values = new HashMap<>();
+        for (PhotoFile raw : raws) {
+            values.merge(raw.path(), finalCaptureDates.contains(captureDate(raw)), Boolean::logicalOr);
+        }
+        return Map.copyOf(values);
     }
 
     private static Set<String> assetIds(List<PhotoFile> files) {

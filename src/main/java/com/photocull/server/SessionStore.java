@@ -27,7 +27,7 @@ final class SessionStore {
 
     synchronized void save(ScanSession session, ScanJob job) throws IOException {
         Map<String, Object> state = new LinkedHashMap<>();
-        state.put("version", 1);
+        state.put("version", 2);
         state.put("session", session == null ? null : sessionJson(session));
         state.put("job", job == null ? null : job.json());
         Path tempFile = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
@@ -61,6 +61,7 @@ final class SessionStore {
         values.put("autoAcceptThreshold", session.threshold());
         values.put("autoRejectThreshold", session.autoRejectThreshold());
         values.put("lastReviewDecisionIndex", session.lastReviewDecisionIndex());
+        values.put("revision", session.revision());
         values.put("raws", session.raws().stream().map(this::photoJson).toList());
         values.put("finals", session.finals().stream().map(this::photoJson).toList());
         Map<Path, Integer> rawIndexes = indexes(session.raws());
@@ -125,7 +126,7 @@ final class SessionStore {
         }
         return ScanSession.restored(instant(values.get("createdAt")), raws, finals, results,
                 number(values.get("autoAcceptThreshold"), 90), number(values.get("autoRejectThreshold"), 50),
-                number(values.get("lastReviewDecisionIndex"), -1));
+                number(values.get("lastReviewDecisionIndex"), -1), numberLong(values.get("revision"), 0));
     }
 
     private Map<Path, Integer> indexes(List<PhotoFile> photos) {

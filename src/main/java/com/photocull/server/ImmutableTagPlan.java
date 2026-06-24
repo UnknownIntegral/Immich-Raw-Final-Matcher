@@ -32,6 +32,7 @@ public final class ImmutableTagPlan {
     private final String id;
     private final Instant createdAt;
     private final Instant sessionCreatedAt;
+    private final long sessionRevision;
     private final String fingerprint;
     private final Map<String, String> decisionTags;
     private final Map<String, String> decisionAlbums;
@@ -43,6 +44,7 @@ public final class ImmutableTagPlan {
             String id,
             Instant createdAt,
             Instant sessionCreatedAt,
+            long sessionRevision,
             String fingerprint,
             Map<String, String> decisionTags,
             Map<String, String> decisionAlbums,
@@ -53,6 +55,7 @@ public final class ImmutableTagPlan {
         this.id = id;
         this.createdAt = createdAt;
         this.sessionCreatedAt = sessionCreatedAt;
+        this.sessionRevision = sessionRevision;
         this.fingerprint = fingerprint;
         this.decisionTags = Map.copyOf(decisionTags);
         this.decisionAlbums = Map.copyOf(decisionAlbums);
@@ -114,18 +117,30 @@ public final class ImmutableTagPlan {
         sort(rawItems);
         sort(finalItems);
         String fingerprint = fingerprint(session.createdAt(), tags, albums, rawItems, finalItems);
-        return new ImmutableTagPlan(UUID.randomUUID().toString(), Instant.now(), session.createdAt(), fingerprint,
+        return new ImmutableTagPlan(UUID.randomUUID().toString(), Instant.now(), session.createdAt(), session.revision(), fingerprint,
                 tags, albums, rawItems, finalItems, null);
     }
 
     public ImmutableTagPlan withManifest(Path path) {
-        return new ImmutableTagPlan(id, createdAt, sessionCreatedAt, fingerprint, decisionTags, decisionAlbums, rawItems, finalItems, path);
+        return new ImmutableTagPlan(id, createdAt, sessionCreatedAt, sessionRevision, fingerprint,
+                decisionTags, decisionAlbums, rawItems, finalItems, path);
     }
 
     public boolean matches(ScanSession session, ImmichConfig config) {
         if (session == null || !sessionCreatedAt.equals(session.createdAt())) {
             return false;
         }
+        if (sessionRevision < 0) {
+            return matchesLegacySession(session, config);
+        }
+        if (sessionRevision != session.revision()) {
+            return false;
+        }
+        return decisionTags.equals(decisionTags(config)) && decisionAlbums.equals(decisionAlbums(config));
+    }
+
+    /** Safely handles plans written before session revisions were persisted. */
+    private boolean matchesLegacySession(ScanSession session, ImmichConfig config) {
         try {
             ImmutableTagPlan current = fromSession(session, config);
             return MessageDigest.isEqual(fingerprint.getBytes(StandardCharsets.UTF_8),
@@ -145,6 +160,10 @@ public final class ImmutableTagPlan {
 
     public Instant sessionCreatedAt() {
         return sessionCreatedAt;
+    }
+
+    public long sessionRevision() {
+        return sessionRevision;
     }
 
     public String fingerprint() {
@@ -191,10 +210,11 @@ public final class ImmutableTagPlan {
 
     Map<String, Object> toJson() {
         Map<String, Object> values = new LinkedHashMap<>();
-        values.put("version", 2);
+        values.put("version", 3);
         values.put("id", id);
         values.put("createdAt", createdAt);
         values.put("sessionCreatedAt", sessionCreatedAt);
+        values.put("sessionRevision", sessionRevision);
         values.put("fingerprint", fingerprint);
         values.put("decisionTags", decisionTags);
         values.put("decisionAlbums", decisionAlbums);
@@ -223,13 +243,14 @@ public final class ImmutableTagPlan {
         String manifest = string(values.get("manifest"));
         Instant createdAt = instant(values.get("createdAt"));
         Instant sessionCreatedAt = instant(values.get("sessionCreatedAt"));
+        long sessionRevision = numberLong(values.get("sessionRevision"), -1);
         String calculated = albums.isEmpty()
                 ? legacyFingerprint(sessionCreatedAt, tags, raw, finals)
                 : fingerprint(sessionCreatedAt, tags, albums, raw, finals);
         if (!MessageDigest.isEqual(fingerprint.getBytes(StandardCharsets.UTF_8), calculated.getBytes(StandardCharsets.UTF_8))) {
             throw new IllegalArgumentException("Stored tag plan fingerprint does not match its contents.");
         }
-        return new ImmutableTagPlan(id, createdAt, sessionCreatedAt,
+        return new ImmutableTagPlan(id, createdAt, sessionCreatedAt, sessionRevision,
                 fingerprint, tags, albums, raw, finals, manifest.isBlank() ? null : Path.of(manifest));
     }
 
@@ -372,6 +393,10 @@ public final class ImmutableTagPlan {
 
     private static String string(Object value) {
         return value == null ? "" : value.toString();
+    }
+
+    private static long numberLong(Object value, long fallback) {
+        return value instanceof Number number ? number.longValue() : fallback;
     }
 
     private static Instant instant(Object value) {
