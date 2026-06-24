@@ -23,8 +23,22 @@ public record ImmichAsset(
         boolean trashed,
         String make,
         String model,
+        String lensModel,
+        Double fNumber,
+        Double focalLength,
+        Integer iso,
+        String exposureTime,
         long sizeBytes
 ) {
+    public ImmichAsset(
+            String id, String ownerId, String originalFileName, String originalPath, String originalMimeType,
+            String type, String checksum, Instant fileCreatedAt, Instant fileModifiedAt, Instant localDateTime,
+            boolean trashed, String make, String model, long sizeBytes
+    ) {
+        this(id, ownerId, originalFileName, originalPath, originalMimeType, type, checksum, fileCreatedAt,
+                fileModifiedAt, localDateTime, trashed, make, model, "", null, null, null, "", sizeBytes);
+    }
+
     public static ImmichAsset fromJson(Map<String, Object> values) {
         Map<String, Object> exif = object(values.get("exifInfo"));
         return new ImmichAsset(
@@ -41,6 +55,11 @@ public record ImmichAsset(
                 bool(values.get("isTrashed")),
                 string(exif.get("make")),
                 string(exif.get("model")),
+                string(exif.get("lensModel")),
+                decimal(exif.get("fNumber")),
+                decimal(exif.get("focalLength")),
+                integer(exif.get("iso")),
+                string(exif.get("exposureTime")),
                 number(exif.get("fileSizeInByte"))
         );
     }
@@ -56,6 +75,11 @@ public record ImmichAsset(
                 bestCaptureTime(),
                 make,
                 model,
+                lensModel,
+                fNumber,
+                focalLength,
+                iso,
+                exposureTime,
                 checksum
         );
     }
@@ -94,6 +118,28 @@ public record ImmichAsset(
             return number.longValue();
         }
         return 0;
+    }
+
+    private static Double decimal(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return value == null || value.toString().isBlank() ? null : Double.valueOf(value.toString());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static Integer integer(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return value == null || value.toString().isBlank() ? null : Integer.valueOf(value.toString());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private static Instant instant(Object value) {

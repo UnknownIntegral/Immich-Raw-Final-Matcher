@@ -882,6 +882,11 @@ public final class PhotoCullServer {
         metadata.put("cameraType", String.join(" ", List.of(file.make(), file.model()).stream()
                 .filter(value -> value != null && !value.isBlank())
                 .toList()));
+        metadata.put("lensModel", file.lensModel());
+        metadata.put("fNumber", file.fNumber());
+        metadata.put("focalLength", file.focalLength());
+        metadata.put("iso", file.iso());
+        metadata.put("exposureTime", file.exposureTime());
         metadata.put("modifiedTimestamp", file.lastModified());
         return metadata;
     }

@@ -22,7 +22,12 @@ public record PhotoFile(
         Instant captureTime,
         boolean captureTimeFromMetadata,
         String make,
-        String model
+        String model,
+        String lensModel,
+        Double fNumber,
+        Double focalLength,
+        Integer iso,
+        String exposureTime
 ) {
     private static final Pattern TRAILING_NUMBER = Pattern.compile("(\\d{3,})$");
 
@@ -38,7 +43,7 @@ public record PhotoFile(
             String model
     ) {
         return fromImmichAsset(assetId, ownerId, originalFileName, originalPath, sizeBytes, fileModifiedAt,
-                captureTime, make, model, null);
+                captureTime, make, model, "", null, null, null, "", null);
     }
 
     public static PhotoFile fromImmichAsset(
@@ -51,6 +56,27 @@ public record PhotoFile(
             Instant captureTime,
             String make,
             String model,
+            String contentHash
+    ) {
+        return fromImmichAsset(assetId, ownerId, originalFileName, originalPath, sizeBytes, fileModifiedAt,
+                captureTime, make, model, "", null, null, null, "", contentHash);
+    }
+
+    public static PhotoFile fromImmichAsset(
+            String assetId,
+            String ownerId,
+            String originalFileName,
+            String originalPath,
+            long sizeBytes,
+            Instant fileModifiedAt,
+            Instant captureTime,
+            String make,
+            String model,
+            String lensModel,
+            Double fNumber,
+            Double focalLength,
+            Integer iso,
+            String exposureTime,
             String contentHash
     ) {
         String fileName = firstNonBlank(originalFileName, fileName(originalPath), assetId);
@@ -72,7 +98,12 @@ public record PhotoFile(
                 captureTime,
                 captureTime != null,
                 blankIfNull(make),
-                blankIfNull(model)
+                blankIfNull(model),
+                blankIfNull(lensModel),
+                fNumber,
+                focalLength,
+                iso,
+                blankIfNull(exposureTime)
         );
     }
 

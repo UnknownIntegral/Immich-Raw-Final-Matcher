@@ -17,8 +17,6 @@ import java.util.function.Consumer;
 public final class MatchEngine {
     private static final int AMBIGUOUS_RAW_MATCH_MARGIN = 8;
     private static final int AMBIGUOUS_RAW_MATCH_MIN_SCORE = 70;
-    private static final Duration CONFLICTING_CAPTURE_TIME_WINDOW = Duration.ofMinutes(5);
-    private static final int CONFLICTING_CAPTURE_TIME_MAX_SCORE = 49;
 
     public List<MatchResult> match(
             List<PhotoFile> rawFiles,
@@ -169,13 +167,6 @@ public final class MatchEngine {
         return first.captureTime() != null && first.captureTime().equals(second.captureTime());
     }
 
-    private boolean hasConflictingCaptureTimes(PhotoFile finished, PhotoFile raw) {
-        return finished.captureTime() != null
-                && raw.captureTime() != null
-                && Duration.between(finished.captureTime(), raw.captureTime()).abs()
-                .compareTo(CONFLICTING_CAPTURE_TIME_WINDOW) > 0;
-    }
-
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
         List<String> reasons = new ArrayList<>();
         int nameScore = nameScore(finished, raw, reasons);
@@ -195,13 +186,6 @@ public final class MatchEngine {
         }
         evidenceScore += metadataScore + folderDateScore;
         int score = Math.max(0, Math.min(100, evidenceScore));
-
-        // A filename collision is not enough to overcome contradictory capture metadata.
-        // Keep these out of the review band instead of suggesting unrelated photos.
-        if (hasConflictingCaptureTimes(finished, raw)) {
-            score = Math.min(score, CONFLICTING_CAPTURE_TIME_MAX_SCORE);
-            reasons.add("capture timestamps differ by more than 5 minutes");
-        }
 
         if (reasons.isEmpty()) {
             reasons.add("Weak filename similarity");
@@ -296,6 +280,27 @@ public final class MatchEngine {
             reasons.add("same camera model");
             score += 5;
         }
+        if (!finished.lensModel().isBlank() && !raw.lensModel().isBlank()
+                && same(finished.lensModel(), raw.lensModel())) {
+            reasons.add("same lens model");
+            score += 3;
+        }
+        if (sameNumber(finished.fNumber(), raw.fNumber(), 0.01)) {
+            reasons.add("same aperture");
+            score += 2;
+        }
+        if (sameNumber(finished.focalLength(), raw.focalLength(), 0.1)) {
+            reasons.add("same focal length");
+            score += 2;
+        }
+        if (finished.iso() != null && raw.iso() != null && finished.iso().equals(raw.iso())) {
+            reasons.add("same ISO");
+            score += 2;
+        }
+        if (sameExposureTime(finished.exposureTime(), raw.exposureTime())) {
+            reasons.add("same exposure time");
+            score += 2;
+        }
         return score;
     }
 
@@ -322,6 +327,36 @@ public final class MatchEngine {
 
     private boolean same(String first, String second) {
         return first.trim().equalsIgnoreCase(second.trim());
+    }
+
+    private boolean sameNumber(Double first, Double second, double tolerance) {
+        return first != null && second != null && Math.abs(first - second) <= tolerance;
+    }
+
+    private boolean sameExposureTime(String first, String second) {
+        if (first == null || second == null || first.isBlank() || second.isBlank()) {
+            return false;
+        }
+        Double firstSeconds = exposureSeconds(first);
+        Double secondSeconds = exposureSeconds(second);
+        if (firstSeconds != null && secondSeconds != null) {
+            return Math.abs(firstSeconds - secondSeconds) <= Math.max(0.00001, Math.max(firstSeconds, secondSeconds) * 0.001);
+        }
+        return same(first, second);
+    }
+
+    private Double exposureSeconds(String value) {
+        try {
+            String trimmed = value.trim();
+            int slash = trimmed.indexOf('/');
+            if (slash > 0 && slash < trimmed.length() - 1) {
+                return Double.parseDouble(trimmed.substring(0, slash).trim())
+                        / Double.parseDouble(trimmed.substring(slash + 1).trim());
+            }
+            return Double.parseDouble(trimmed);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private double diceCoefficient(String first, String second) {

@@ -49,7 +49,8 @@ public final class Tests {
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
-        rejectsFilenameMatchesWithConflictingCaptureTimes();
+        acceptsFilenameMatchesWithConflictingCaptureTimes();
+        usesRawExifDetailsForMatching();
         autoAcceptsUniqueExactTimestamp();
         autoAcceptsExactTimestampWithOtherCandidates();
         updatesCachedSessionMetricsDuringReview();
@@ -132,6 +133,21 @@ public final class Tests {
         assertEquals("CR3", raw.extension(), "extension");
         assertEquals("img1234", raw.normalizedStem(), "normalized stem");
         assertEquals("1234", raw.trailingNumber(), "trailing number");
+
+        ImmichAsset parsed = ImmichAsset.fromJson(Json.parseObject("""
+                {"id":"raw-exif","ownerId":"raw-owner","originalFileName":"IMG_1234.CR3",
+                "originalPath":"/upload/raw/IMG_1234.CR3","type":"IMAGE","checksum":"checksum",
+                "fileCreatedAt":"2024-01-01T10:00:00Z","fileModifiedAt":"2024-01-01T10:00:00Z",
+                "localDateTime":"2024-01-01T10:00:00Z","exifInfo":{"make":"Canon","model":"R5",
+                "lensModel":"RF24-70mm F2.8 L IS USM","fNumber":2.8,"focalLength":50,"iso":400,
+                "exposureTime":"1/200","fileSizeInByte":42}}
+                """));
+        PhotoFile exifRaw = parsed.toPhotoFile();
+        assertEquals("RF24-70mm F2.8 L IS USM", exifRaw.lensModel(), "lens metadata is retained");
+        assertEquals(2.8, exifRaw.fNumber(), "aperture metadata is retained");
+        assertEquals(50.0, exifRaw.focalLength(), "focal-length metadata is retained");
+        assertEquals(400, exifRaw.iso(), "ISO metadata is retained");
+        assertEquals("1/200", exifRaw.exposureTime(), "exposure metadata is retained");
     }
 
     private static void createsAssetIdTagPlans() {
@@ -294,7 +310,7 @@ public final class Tests {
         assertEquals(1L, session.unusedCount(), "auto-rejected RAW is unused");
     }
 
-    private static void rejectsFilenameMatchesWithConflictingCaptureTimes() {
+    private static void acceptsFilenameMatchesWithConflictingCaptureTimes() {
         Instant rawTime = Instant.parse("2025-05-12T17:32:09Z");
         Instant finalTime = Instant.parse("2024-11-29T16:39:28Z");
         PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "IMG_0001.CR3", "/raw/upload-id.CR3", 1,
@@ -304,9 +320,26 @@ public final class Tests {
 
         MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
 
-        assertEquals(49, match.score(), "conflicting capture metadata caps filename score");
-        assertEquals(MatchStatus.AUTO_REJECTED, match.status(), "conflicting capture metadata stays out of review");
-        assertTrue(match.reason().contains("capture timestamps differ by more than 5 minutes"), "conflict reason is visible");
+        assertEquals(97, match.score(), "filename and camera metadata remain strong despite changed capture times");
+        assertEquals(MatchStatus.AUTO_ACCEPTED, match.status(), "changed capture metadata does not veto a strong match");
+    }
+
+    private static void usesRawExifDetailsForMatching() {
+        Instant rawTime = Instant.parse("2025-05-12T17:32:09Z");
+        Instant finalTime = rawTime.plusSeconds(1);
+        PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "IMG_0001.CR3", "/raw/IMG_0001.CR3", 1,
+                rawTime, rawTime, "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200", null);
+        PhotoFile finished = PhotoFile.fromImmichAsset("final-1", "final-owner", "WEDDING_0001.jpg", "/final/WEDDING_0001.jpg", 1,
+                finalTime, finalTime, "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "0.005", null);
+
+        MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
+
+        assertEquals(94, match.score(), "lens and exposure EXIF adds corroborating matching evidence");
+        assertTrue(match.reason().contains("same lens model"), "lens evidence is recorded");
+        assertTrue(match.reason().contains("same aperture"), "aperture evidence is recorded");
+        assertTrue(match.reason().contains("same focal length"), "focal-length evidence is recorded");
+        assertTrue(match.reason().contains("same ISO"), "ISO evidence is recorded");
+        assertTrue(match.reason().contains("same exposure time"), "equivalent exposure values are matched");
     }
 
     private static void updatesCachedSessionMetricsDuringReview() {

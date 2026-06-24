@@ -147,6 +147,11 @@ final class SessionStore {
         values.put("captureTime", photo.captureTime());
         values.put("make", photo.make());
         values.put("model", photo.model());
+        values.put("lensModel", photo.lensModel());
+        values.put("fNumber", photo.fNumber());
+        values.put("focalLength", photo.focalLength());
+        values.put("iso", photo.iso());
+        values.put("exposureTime", photo.exposureTime());
         values.put("contentHash", photo.contentHash());
         return values;
     }
@@ -157,7 +162,8 @@ final class SessionStore {
         return PhotoFile.fromImmichAsset(string(values.get("assetId"), null), string(values.get("ownerId"), null),
                 fileName, path, numberLong(values.get("sizeBytes"), 0), instant(values.get("lastModified")),
                 instantOrNull(values.get("captureTime")), string(values.get("make"), ""), string(values.get("model"), ""),
-                string(values.get("contentHash"), null));
+                string(values.get("lensModel"), ""), decimal(values.get("fNumber")), decimal(values.get("focalLength")),
+                integerOrNull(values.get("iso")), string(values.get("exposureTime"), ""), string(values.get("contentHash"), null));
     }
 
     @SuppressWarnings("unchecked")
@@ -171,6 +177,28 @@ final class SessionStore {
 
     private static int number(Object value, int fallback) {
         return value instanceof Number number ? number.intValue() : fallback;
+    }
+
+    private static Double decimal(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return value == null || value.toString().isBlank() ? null : Double.valueOf(value.toString());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static Integer integerOrNull(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return value == null || value.toString().isBlank() ? null : Integer.valueOf(value.toString());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private static long numberLong(Object value, long fallback) {
