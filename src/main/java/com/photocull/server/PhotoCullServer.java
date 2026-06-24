@@ -49,11 +49,13 @@ public final class PhotoCullServer {
     private volatile PlanApplyOperation activeOperation;
     private volatile ImmichPermissionReport permissionReport;
     private final ExecutorService scanExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService stateRestoreExecutor = Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService persistenceExecutor = Executors.newSingleThreadScheduledExecutor();
     private final Object persistenceLock = new Object();
     private final Object applyLock = new Object();
     private ScheduledFuture<?> pendingPersistence;
     private volatile boolean tagApplicationInProgress;
+    private volatile boolean stateRestoreInProgress = true;
     private HttpServer server;
 
     public PhotoCullServer(int port, Path configDir) {
@@ -77,7 +79,6 @@ public final class PhotoCullServer {
 
     public void start() throws IOException {
         Files.createDirectories(configDir);
-        restorePersistedState();
         server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", this::handleIndex);
         server.createContext("/api/status", this::handleStatus);
@@ -99,6 +100,13 @@ public final class PhotoCullServer {
         int requestThreads = Math.max(4, Math.min(16, Runtime.getRuntime().availableProcessors()));
         server.setExecutor(Executors.newFixedThreadPool(requestThreads));
         server.start();
+        stateRestoreExecutor.submit(() -> {
+            try {
+                restorePersistedState();
+            } finally {
+                stateRestoreExecutor.shutdown();
+            }
+        });
         Runtime.getRuntime().addShutdownHook(new Thread(this::flushPersistedState, "pca-state-flush"));
     }
 
@@ -143,6 +151,9 @@ public final class PhotoCullServer {
             return;
         }
         if (!requireAccess(exchange)) {
+            return;
+        }
+        if (!requireRestoredState(exchange)) {
             return;
         }
         if (session == null) {
@@ -232,6 +243,9 @@ public final class PhotoCullServer {
         if (!requireAccess(exchange)) {
             return;
         }
+        if (!requireRestoredState(exchange)) {
+            return;
+        }
 
         try {
             Map<String, String> form = FormData.parse(FormData.body(exchange));
@@ -279,6 +293,9 @@ public final class PhotoCullServer {
             return;
         }
         if (!requireAccess(exchange)) {
+            return;
+        }
+        if (!requireRestoredState(exchange)) {
             return;
         }
         if (session == null) {
@@ -332,6 +349,9 @@ public final class PhotoCullServer {
         if (!requireAccess(exchange)) {
             return;
         }
+        if (!requireRestoredState(exchange)) {
+            return;
+        }
         if (session == null) {
             send(exchange, 409, "application/json", error("No scan session exists yet."));
             return;
@@ -381,6 +401,9 @@ public final class PhotoCullServer {
             return;
         }
 
+        if (!requireRestoredState(exchange)) {
+            return;
+        }
         if (scanJob != null && "RUNNING".equals(scanJob.json().get("state"))) {
             send(exchange, 409, "application/json", error("An Immich scan is already running."));
             return;
@@ -423,6 +446,9 @@ public final class PhotoCullServer {
             return;
         }
         if (!requireAccess(exchange)) {
+            return;
+        }
+        if (!requireRestoredState(exchange)) {
             return;
         }
         if (session == null) {
@@ -469,6 +495,9 @@ public final class PhotoCullServer {
         if (!requireAccess(exchange)) {
             return;
         }
+        if (!requireRestoredState(exchange)) {
+            return;
+        }
         if (session == null) {
             send(exchange, 409, "application/json", error("No scan session exists yet."));
             return;
@@ -505,6 +534,9 @@ public final class PhotoCullServer {
         if (!requireAccess(exchange)) {
             return;
         }
+        if (!requireRestoredState(exchange)) {
+            return;
+        }
         if (session == null) {
             send(exchange, 409, "application/json", error("Run a scan before testing Immich API-key permissions."));
             return;
@@ -528,6 +560,9 @@ public final class PhotoCullServer {
             return;
         }
         if (!requireAccess(exchange)) {
+            return;
+        }
+        if (!requireRestoredState(exchange)) {
             return;
         }
         if (session == null) {
@@ -592,6 +627,7 @@ public final class PhotoCullServer {
     private String statusJson() {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("port", port);
+        values.put("stateRestoring", stateRestoreInProgress);
         values.put("hasSession", session != null);
         values.put("immich", immichStatus());
         if (permissionReport != null) {
@@ -832,26 +868,30 @@ public final class PhotoCullServer {
 
     private void restorePersistedState() {
         try {
-            SessionStore.StoredState stored = sessionStore.load(this::schedulePersistState);
-            session = stored.session();
-            scanJob = stored.job();
-            if (scanJob != null) {
-                scanJob.interrupt();
+            try {
+                SessionStore.StoredState stored = sessionStore.load(this::schedulePersistState);
+                session = stored.session();
+                scanJob = stored.job();
+                if (scanJob != null) {
+                    scanJob.interrupt();
+                }
+            } catch (Exception ex) {
+                System.err.println("Ignoring unreadable persisted scan state: " + ex.getMessage());
             }
-        } catch (Exception ex) {
-            System.err.println("Ignoring unreadable persisted scan state: " + ex.getMessage());
-        }
-        try {
-            activePlan = planStore.loadActive().orElse(null);
-            if (activePlan != null && !activePlan.matches(session, immichConfig)) {
-                invalidateActivePlan();
-            } else if (activePlan != null) {
-                activeOperation = planStore.loadOperation(activePlan).orElse(null);
+            try {
+                activePlan = planStore.loadActive().orElse(null);
+                if (activePlan != null && !activePlan.matches(session, immichConfig)) {
+                    invalidateActivePlan();
+                } else if (activePlan != null) {
+                    activeOperation = planStore.loadOperation(activePlan).orElse(null);
+                }
+            } catch (Exception ex) {
+                activePlan = null;
+                activeOperation = null;
+                System.err.println("Ignoring unreadable persisted tag plan state: " + ex.getMessage());
             }
-        } catch (Exception ex) {
-            activePlan = null;
-            activeOperation = null;
-            System.err.println("Ignoring unreadable persisted tag plan state: " + ex.getMessage());
+        } finally {
+            stateRestoreInProgress = false;
         }
     }
 
@@ -945,6 +985,11 @@ public final class PhotoCullServer {
     }
 
     private void flushPersistedState() {
+        if (stateRestoreInProgress) {
+            stateRestoreExecutor.shutdownNow();
+            persistenceExecutor.shutdownNow();
+            return;
+        }
         synchronized (persistenceLock) {
             if (pendingPersistence != null) {
                 pendingPersistence.cancel(false);
@@ -991,6 +1036,14 @@ public final class PhotoCullServer {
             return true;
         }
         send(exchange, 401, "application/json", error("Access token required."));
+        return false;
+    }
+
+    private boolean requireRestoredState(HttpExchange exchange) throws IOException {
+        if (!stateRestoreInProgress) {
+            return true;
+        }
+        send(exchange, 503, "application/json", error("Restoring saved session data. Try again in a moment."));
         return false;
     }
 

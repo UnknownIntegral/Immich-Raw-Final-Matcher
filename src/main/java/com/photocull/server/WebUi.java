@@ -41,7 +41,7 @@ public final class WebUi {
                         <button id="scanButton" type="submit">Scan Immich</button>
                       </form>
                       <div class="progress-shell" id="progressShell" hidden><div id="progress" class="progress indeterminate"><div></div></div><span id="progressText" class="status">Starting...</span></div>
-                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Approve dry-run plan</button><button id="applyTagsButton" disabled>Apply approved tags and Albums</button><button id="clearCacheButton" class="danger">Clear saved review data</button><span id="planStatus" class="status"></span><span id="message" class="status"></span></div>
+                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Approve dry-run plan</button><button id="applyTagsButton" disabled>Apply approved tags and Albums</button><button id="clearCacheButton" class="danger">Clear saved review data</button><span id="planStatus" class="status"></span><span id="message" class="status" aria-live="polite"></span></div>
                       <div id="tagApplySuccess" class="success-box" hidden role="status"></div>
                     </section>
                     <section>
@@ -130,10 +130,13 @@ public final class WebUi {
                         if (job.state === 'COMPLETE') { await loadSession(); await refreshReview(); hideProgress(); setBusy(false); message('Immich scan complete.'); return; }
                       }
                     }
+                    function useSession(session) {
+                      state.session = session; state.reviewRows = []; state.matches = []; state.matchesOffset = 0; state.matchCount = session.matchCount || 0; state.tagPlan = null; state.finalTagPlan = null; state.selectedRawByMatch = new Map(); render();
+                    }
                     async function loadSession() {
                       const response = await apiFetch('/api/session'); const data = await response.json();
                       if (!response.ok) throw new Error(data.error || 'Could not load scan results');
-                      state.session = data.session; state.reviewRows = []; state.matches = []; state.matchesOffset = 0; state.matchCount = data.session.matchCount || 0; state.tagPlan = null; state.finalTagPlan = null; state.selectedRawByMatch = new Map(); render();
+                      useSession(data.session);
                     }
                     async function refreshReview(append = false) {
                       if (!state.session) return;
@@ -283,7 +286,8 @@ public final class WebUi {
                     function hideProgress(){$('progressShell').hidden=true;}
                     function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan;$('permissionCheckButton').disabled=value||!state.session;$('clearCacheButton').disabled=value;if(activeTab==='review')renderReview();}
                     async function apiFetch(url,options={},retry=true){const headers=new Headers(options.headers||{});const token=localStorage.getItem('pcaAccessToken');if(token)headers.set('X-PCA-Token',token);const response=await fetch(url,{...options,headers});if(response.status===401&&retry){const entered=prompt('Access token');if(entered!==null){localStorage.setItem('pcaAccessToken',entered);return apiFetch(url,options,false);}}return response;}
-                    async function restoreOnLoad(){try{const statusResponse=await apiFetch('/api/status');const status=await statusResponse.json();if(!statusResponse.ok)throw new Error(status.error||'Could not restore app state');state.permissions=status.permissions||null;if(status.hasSession){await loadSession();await refreshReview();}else{renderPermissions();}const job=status.scanJob;if(job?.state==='RUNNING'){setBusy(true);showProgress(job.message,job.percent);await pollScan();}else if(job?.state==='INTERRUPTED'){message(job.error||job.message);}}catch(error){message(error.message);}}
+                    async function loadAppStatus(){const response=await apiFetch('/api/status');const status=await response.json();if(!response.ok)throw new Error(status.error||'Could not read app status');return status;}
+                    async function restoreOnLoad(){try{message('Checking saved session...');let status=await loadAppStatus();if(status.stateRestoring){setBusy(true);message('Restoring saved session data...');while(status.stateRestoring){await new Promise(resolve=>setTimeout(resolve,300));status=await loadAppStatus();}setBusy(false);}state.permissions=status.permissions||null;if(status.hasSession){useSession(status.session);await refreshReview();}else{renderPermissions();}const job=status.scanJob;if(job?.state==='RUNNING'){setBusy(true);showProgress(job.message,job.percent);await pollScan();}else if(job?.state==='INTERRUPTED'){message(job.error||job.message);}else{message('');}}catch(error){setBusy(false);message(error.message);}}
                     render(); restoreOnLoad();
                   </script>
                 </body>

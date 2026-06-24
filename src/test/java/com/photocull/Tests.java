@@ -68,6 +68,7 @@ public final class Tests {
         freezesExactPlanBeforeApplying();
         reconcilesStaleDecisionTags();
         omitsApiKeysFromStatusJson();
+        reportsStateRestoreProgress();
     }
 
     private static void parsesJsonObjects() {
@@ -773,6 +774,21 @@ public final class Tests {
         assertEquals("FINAL_IMMICH_API_KEY", immich.get("finalApiKeySource"), "final status source");
         assertTrue(!json.contains("raw-secret"), "raw key hidden");
         assertTrue(!json.contains("final-secret"), "final key hidden");
+    }
+
+    private static void reportsStateRestoreProgress() throws Exception {
+        Path configDir = Path.of("build", "test-config", "restore-status-" + UUID.randomUUID());
+        PhotoCullServer server = new PhotoCullServer(8356, configDir, config("raw-key", "final-key"));
+        Method statusJson = PhotoCullServer.class.getDeclaredMethod("statusJson");
+        statusJson.setAccessible(true);
+        assertEquals(Boolean.TRUE, Json.parseObject((String) statusJson.invoke(server)).get("stateRestoring"),
+                "status reports that saved state is still loading");
+
+        Method restorePersistedState = PhotoCullServer.class.getDeclaredMethod("restorePersistedState");
+        restorePersistedState.setAccessible(true);
+        restorePersistedState.invoke(server);
+        assertEquals(Boolean.FALSE, Json.parseObject((String) statusJson.invoke(server)).get("stateRestoring"),
+                "status reports when saved state is ready");
     }
 
     private static ImmichConfig config(String rawKey, String finalKey) {
