@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -17,6 +18,7 @@ import java.util.function.Consumer;
 public final class MatchEngine {
     private static final int AMBIGUOUS_RAW_MATCH_MARGIN = 8;
     private static final int AMBIGUOUS_RAW_MATCH_MIN_SCORE = 70;
+    private static final int SAME_DAY_TIMESTAMP_CONFLICT_CAP = 89;
 
     public List<MatchResult> match(
             List<PhotoFile> rawFiles,
@@ -186,11 +188,33 @@ public final class MatchEngine {
         }
         evidenceScore += metadataScore + folderDateScore;
         int score = Math.max(0, Math.min(100, evidenceScore));
+        score = Math.min(score, timestampConflictCap(finished, raw, reasons));
 
         if (reasons.isEmpty()) {
             reasons.add("Weak filename similarity");
         }
-        return new ScoredMatch(raw, score, evidenceScore, nameScore, String.join("; ", reasons));
+        return new ScoredMatch(raw, score, score, nameScore, String.join("; ", reasons));
+    }
+
+    private int timestampConflictCap(PhotoFile finished, PhotoFile raw, List<String> reasons) {
+        if (finished.captureTime() == null || raw.captureTime() == null) {
+            return 100;
+        }
+        if (!captureDate(finished).equals(captureDate(raw))) {
+            reasons.add("capture dates differ");
+            return 0;
+        }
+        Duration difference = Duration.between(finished.captureTime(), raw.captureTime()).abs();
+        long seconds = difference.toSeconds();
+        if (seconds <= 3600) {
+            return 100;
+        }
+        reasons.add("capture timestamps differ by more than 1 hour");
+        return SAME_DAY_TIMESTAMP_CONFLICT_CAP;
+    }
+
+    private LocalDate captureDate(PhotoFile file) {
+        return file.captureTime().atZone(ZoneOffset.UTC).toLocalDate();
     }
 
     private int nameScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {

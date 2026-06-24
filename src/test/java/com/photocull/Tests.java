@@ -49,7 +49,7 @@ public final class Tests {
         createsFinalAccountTagPlans();
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
-        acceptsFilenameMatchesWithConflictingCaptureTimes();
+        rejectsFilenameMatchesWithDifferentCaptureDates();
         usesRawExifDetailsForMatching();
         autoAcceptsUniqueExactTimestamp();
         autoAcceptsExactTimestampWithOtherCandidates();
@@ -310,7 +310,7 @@ public final class Tests {
         assertEquals(1L, session.unusedCount(), "auto-rejected RAW is unused");
     }
 
-    private static void acceptsFilenameMatchesWithConflictingCaptureTimes() {
+    private static void rejectsFilenameMatchesWithDifferentCaptureDates() {
         Instant rawTime = Instant.parse("2025-05-12T17:32:09Z");
         Instant finalTime = Instant.parse("2024-11-29T16:39:28Z");
         PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "IMG_0001.CR3", "/raw/upload-id.CR3", 1,
@@ -320,8 +320,9 @@ public final class Tests {
 
         MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
 
-        assertEquals(97, match.score(), "filename and camera metadata remain strong despite changed capture times");
-        assertEquals(MatchStatus.AUTO_ACCEPTED, match.status(), "changed capture metadata does not veto a strong match");
+        assertEquals(0, match.score(), "different capture dates reject filename and camera evidence");
+        assertEquals(null, match.raw(), "different capture dates produce no RAW match");
+        assertEquals(MatchStatus.AUTO_REJECTED, match.status(), "different capture dates stay out of review");
     }
 
     private static void usesRawExifDetailsForMatching() {
