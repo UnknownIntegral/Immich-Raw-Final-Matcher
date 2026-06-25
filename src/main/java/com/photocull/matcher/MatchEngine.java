@@ -173,9 +173,10 @@ public final class MatchEngine {
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
         List<String> reasons = new ArrayList<>();
         List<MatchScoreDetail> details = new ArrayList<>();
-        if (cameraModelsConflict(finished, raw)) {
-            reasons.add("camera models differ");
-            details.add(new MatchScoreDetail("cameraType", "Camera", 7, 0, "Camera models differ; explicit model mismatches cannot match."));
+        MatchScoreDetail incompatibility = exifIncompatibility(finished, raw);
+        if (incompatibility != null) {
+            reasons.add(incompatibility.note());
+            details.add(incompatibility);
             return new ScoredMatch(raw, 0, 0, 0, String.join("; ", reasons), details);
         }
 
@@ -393,8 +394,61 @@ public final class MatchEngine {
         return 0;
     }
 
-    private boolean cameraModelsConflict(PhotoFile finished, PhotoFile raw) {
-        return !finished.model().isBlank() && !raw.model().isBlank() && !same(finished.model(), raw.model());
+    private MatchScoreDetail exifIncompatibility(PhotoFile finished, PhotoFile raw) {
+        if (stringsConflict(finished.make(), raw.make())) {
+            return new MatchScoreDetail("cameraType", "Camera", 7, 0, "Camera makes differ; EXIF discrepancies cannot match.");
+        }
+        if (stringsConflict(finished.model(), raw.model())) {
+            return new MatchScoreDetail("cameraType", "Camera", 7, 0, "Camera models differ; EXIF discrepancies cannot match.");
+        }
+        if (stringsConflict(finished.lensModel(), raw.lensModel())) {
+            return new MatchScoreDetail("lensModel", "Lens", 3, 0, "Lens models differ; EXIF discrepancies cannot match.");
+        }
+        if (numbersConflict(finished.fNumber(), raw.fNumber(), 0.01)) {
+            return new MatchScoreDetail("fNumber", "Aperture", 2, 0, "Aperture values differ; EXIF discrepancies cannot match.");
+        }
+        if (numbersConflict(finished.focalLength(), raw.focalLength(), 0.1)) {
+            return new MatchScoreDetail("focalLength", "Focal length", 2, 0, "Focal lengths differ; EXIF discrepancies cannot match.");
+        }
+        if (integersConflict(finished.iso(), raw.iso())) {
+            return new MatchScoreDetail("iso", "ISO", 2, 0, "ISO values differ; EXIF discrepancies cannot match.");
+        }
+        if (exposureTimesConflict(finished.exposureTime(), raw.exposureTime())) {
+            return new MatchScoreDetail("exposureTime", "Exposure time", 2, 0, "Exposure times differ; EXIF discrepancies cannot match.");
+        }
+        return null;
+    }
+
+    private boolean stringsConflict(String first, String second) {
+        boolean firstBlank = first == null || first.isBlank();
+        boolean secondBlank = second == null || second.isBlank();
+        if (firstBlank || secondBlank) {
+            return firstBlank != secondBlank;
+        }
+        return !same(first, second);
+    }
+
+    private boolean numbersConflict(Double first, Double second, double tolerance) {
+        if (first == null || second == null) {
+            return first != null || second != null;
+        }
+        return !sameNumber(first, second, tolerance);
+    }
+
+    private boolean integersConflict(Integer first, Integer second) {
+        if (first == null || second == null) {
+            return first != null || second != null;
+        }
+        return !first.equals(second);
+    }
+
+    private boolean exposureTimesConflict(String first, String second) {
+        boolean firstBlank = first == null || first.isBlank();
+        boolean secondBlank = second == null || second.isBlank();
+        if (firstBlank || secondBlank) {
+            return firstBlank != secondBlank;
+        }
+        return !sameExposureTime(first, second);
     }
 
     private boolean same(String first, String second) {

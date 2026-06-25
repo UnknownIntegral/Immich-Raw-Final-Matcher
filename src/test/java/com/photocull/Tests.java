@@ -52,6 +52,7 @@ public final class Tests {
         autoRejectsLowScoresOutsideReviewQueue();
         rejectsFilenameMatchesWithDifferentCaptureDates();
         rejectsMatchesWithDifferentCameraModels();
+        rejectsMatchesWithExifDiscrepancies();
         usesRawExifDetailsForMatching();
         autoAcceptsUniqueExactTimestamp();
         autoAcceptsExactTimestampWithOtherCandidates();
@@ -360,6 +361,47 @@ public final class Tests {
         assertEquals(0, match.score(), "different camera models force a zero score");
         assertEquals(null, match.raw(), "different camera models produce no RAW match");
         assertEquals(MatchStatus.AUTO_REJECTED, match.status(), "different camera models stay out of review");
+    }
+
+    private static void rejectsMatchesWithExifDiscrepancies() {
+        assertExifDiscrepancyRejects(
+                "lens mismatch",
+                exifPhoto("raw-1", "raw-owner", "IMG_0001.CR3", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200"),
+                exifPhoto("final-1", "final-owner", "IMG_0001.jpg", "Canon", "EOS R6m2", "RF50mm F1.2 L USM", 2.8, 50.0, 400, "1/200")
+        );
+        assertExifDiscrepancyRejects(
+                "aperture mismatch",
+                exifPhoto("raw-1", "raw-owner", "IMG_0001.CR3", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200"),
+                exifPhoto("final-1", "final-owner", "IMG_0001.jpg", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 4.0, 50.0, 400, "1/200")
+        );
+        assertExifDiscrepancyRejects(
+                "focal length mismatch",
+                exifPhoto("raw-1", "raw-owner", "IMG_0001.CR3", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200"),
+                exifPhoto("final-1", "final-owner", "IMG_0001.jpg", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 70.0, 400, "1/200")
+        );
+        assertExifDiscrepancyRejects(
+                "ISO mismatch",
+                exifPhoto("raw-1", "raw-owner", "IMG_0001.CR3", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200"),
+                exifPhoto("final-1", "final-owner", "IMG_0001.jpg", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 800, "1/200")
+        );
+        assertExifDiscrepancyRejects(
+                "exposure mismatch",
+                exifPhoto("raw-1", "raw-owner", "IMG_0001.CR3", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200"),
+                exifPhoto("final-1", "final-owner", "IMG_0001.jpg", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/400")
+        );
+        assertExifDiscrepancyRejects(
+                "camera make mismatch",
+                exifPhoto("raw-1", "raw-owner", "IMG_0001.CR3", "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200"),
+                exifPhoto("final-1", "final-owner", "IMG_0001.jpg", "Nikon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200")
+        );
+    }
+
+    private static void assertExifDiscrepancyRejects(String label, PhotoFile raw, PhotoFile finished) {
+        MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
+
+        assertEquals(0, match.score(), label + " score");
+        assertEquals(null, match.raw(), label + " raw match");
+        assertEquals(MatchStatus.AUTO_REJECTED, match.status(), label + " status");
     }
 
     private static void updatesCachedSessionMetricsDuringReview() {
@@ -962,6 +1004,37 @@ public final class Tests {
                 "",
                 "",
                 checksum
+        );
+    }
+
+    private static PhotoFile exifPhoto(
+            String id,
+            String ownerId,
+            String fileName,
+            String make,
+            String model,
+            String lensModel,
+            Double fNumber,
+            Double focalLength,
+            Integer iso,
+            String exposureTime
+    ) {
+        return PhotoFile.fromImmichAsset(
+                id,
+                ownerId,
+                fileName,
+                "/upload/" + fileName,
+                1,
+                Instant.parse("2025-05-12T17:32:09Z"),
+                Instant.parse("2025-05-12T17:32:09Z"),
+                make,
+                model,
+                lensModel,
+                fNumber,
+                focalLength,
+                iso,
+                exposureTime,
+                null
         );
     }
 
