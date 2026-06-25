@@ -64,7 +64,7 @@ public final class MatchEngine {
             ScoredMatch best = scoredCandidates.isEmpty() ? null : scoredCandidates.get(0);
             List<MatchCandidate> reviewCandidates = scoredCandidates.stream()
                     .limit(5)
-                    .map(match -> new MatchCandidate(match.raw(), match.score(), match.reason()))
+                    .map(match -> new MatchCandidate(match.raw(), match.score(), match.reason(), match.scoreDetails()))
                     .toList();
 
             if (best == null) {
@@ -93,13 +93,14 @@ public final class MatchEngine {
                                     + second.raw().path() + " scored " + second.score(),
                             MatchStatus.NEEDS_REVIEW,
                             null,
-                            reviewCandidates
+                            reviewCandidates,
+                            best.scoreDetails()
                     ));
                 } else {
                     MatchStatus status = best.score() >= autoAcceptThreshold
                             ? MatchStatus.AUTO_ACCEPTED
                             : best.score() <= autoRejectThreshold ? MatchStatus.AUTO_REJECTED : MatchStatus.NEEDS_REVIEW;
-                    results.add(new MatchResult(finished, best.raw(), best.score(), best.reason(), status, null, reviewCandidates));
+                    results.add(new MatchResult(finished, best.raw(), best.score(), best.reason(), status, null, reviewCandidates, best.scoreDetails()));
                 }
             }
 
@@ -171,29 +172,43 @@ public final class MatchEngine {
 
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
         List<String> reasons = new ArrayList<>();
-        int nameScore = nameScore(finished, raw, reasons);
-        int timeScore = timeScore(finished, raw, reasons);
-        int visualScore = visualScore(finished, raw, reasons);
-        int metadataScore = metadataScore(finished, raw, reasons);
-        int folderDateScore = folderDateScore(finished, raw, reasons);
+        List<MatchScoreDetail> details = new ArrayList<>();
+        if (cameraModelsConflict(finished, raw)) {
+            reasons.add("camera models differ");
+            details.add(new MatchScoreDetail("cameraType", "Camera", 7, 0, "Camera models differ; explicit model mismatches cannot match."));
+            return new ScoredMatch(raw, 0, 0, 0, String.join("; ", reasons), details);
+        }
+
+        int nameScore = nameScore(finished, raw, reasons, details);
+        int timeScore = timeScore(finished, raw, reasons, details);
+        int visualScore = visualScore(finished, raw, reasons, details);
+        int metadataScore = metadataScore(finished, raw, reasons, details);
+        int folderDateScore = folderDateScore(finished, raw, reasons, details);
 
         int evidenceScore = Math.max(Math.max(nameScore, timeScore), visualScore);
         if (nameScore >= 70 && timeScore >= 58) {
             evidenceScore += 12;
+            details.add(new MatchScoreDetail("combinedEvidence", "Filename + time bonus", 12, 12, "Strong filename evidence and close capture time reinforce each other."));
         } else if (nameScore >= 45 && timeScore >= 72) {
             evidenceScore += 10;
+            details.add(new MatchScoreDetail("combinedEvidence", "Filename + time bonus", 10, 10, "Moderate filename evidence and very strong capture time reinforce each other."));
         }
         if (visualScore >= 68 && (nameScore >= 45 || timeScore >= 58)) {
             evidenceScore += 8;
+            details.add(new MatchScoreDetail("visualBonus", "Visual + metadata bonus", 8, 8, "Strong visual evidence reinforces filename or time evidence."));
         }
         evidenceScore += metadataScore + folderDateScore;
         int score = Math.max(0, Math.min(100, evidenceScore));
-        score = Math.min(score, timestampConflictCap(finished, raw, reasons));
+        int cap = timestampConflictCap(finished, raw, reasons);
+        if (cap < score) {
+            details.add(new MatchScoreDetail("timestampCap", "Timestamp cap", 100, cap - score, "Capture timestamps conflict, so the final score is capped at " + cap + "%."));
+        }
+        score = Math.min(score, cap);
 
         if (reasons.isEmpty()) {
             reasons.add("Weak filename similarity");
         }
-        return new ScoredMatch(raw, score, score, nameScore, String.join("; ", reasons));
+        return new ScoredMatch(raw, score, score, nameScore, String.join("; ", reasons), details);
     }
 
     private int timestampConflictCap(PhotoFile finished, PhotoFile raw, List<String> reasons) {
@@ -217,66 +232,79 @@ public final class MatchEngine {
         return file.captureTime().atZone(ZoneOffset.UTC).toLocalDate();
     }
 
-    private int nameScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
+    private int nameScore(PhotoFile finished, PhotoFile raw, List<String> reasons, List<MatchScoreDetail> details) {
         if (finished.normalizedStem().equals(raw.normalizedStem())) {
             reasons.add("same filename stem");
+            details.add(new MatchScoreDetail("filename", "Filename", 90, 90, "Same normalized filename stem."));
             return 90;
         }
         if (!finished.trailingNumber().isBlank() && finished.trailingNumber().equals(raw.trailingNumber())) {
             reasons.add("same trailing image number " + finished.trailingNumber());
+            details.add(new MatchScoreDetail("filename", "Filename", 90, 76, "Same trailing image number " + finished.trailingNumber() + "."));
             return 76;
         }
         if (finished.normalizedStem().length() >= 4 && raw.normalizedStem().contains(finished.normalizedStem())) {
             reasons.add("RAW filename contains finished filename");
+            details.add(new MatchScoreDetail("filename", "Filename", 90, 60, "RAW filename contains the finished filename."));
             return 60;
         }
         if (raw.normalizedStem().length() >= 4 && finished.normalizedStem().contains(raw.normalizedStem())) {
             reasons.add("finished filename contains RAW filename");
+            details.add(new MatchScoreDetail("filename", "Filename", 90, 60, "Finished filename contains the RAW filename."));
             return 60;
         }
         double similarity = diceCoefficient(finished.normalizedStem(), raw.normalizedStem());
         int score = (int) Math.round(similarity * 55.0);
         if (score >= 25) {
             reasons.add("similar filename");
+            details.add(new MatchScoreDetail("filename", "Filename", 90, score, "Filename similarity score."));
         }
         return score;
     }
 
-    private int timeScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
+    private int timeScore(PhotoFile finished, PhotoFile raw, List<String> reasons, List<MatchScoreDetail> details) {
         if (finished.captureTime() != null && raw.captureTime() != null) {
             Duration difference = Duration.between(finished.captureTime(), raw.captureTime()).abs();
             if (difference.isZero()) {
                 reasons.add("exact capture timestamp");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 100, "Exact capture timestamp."));
                 return 100;
             }
             long seconds = difference.toSeconds();
             // Near timestamps are common in a burst, so they remain review-level signals.
             if (seconds == 0) {
                 reasons.add("capture times are less than 1 second apart");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 60, "Capture times are less than 1 second apart."));
                 return 60;
             }
             if (seconds == 1) {
                 reasons.add("capture times are 1 second apart");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 52, "Capture times are 1 second apart."));
                 return 52;
             }
             if (seconds <= 2) {
                 reasons.add("capture times are 2 seconds apart");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 44, "Capture times are 2 seconds apart."));
                 return 44;
             }
             if (seconds <= 10) {
                 reasons.add("capture times match within 10 seconds");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 38, "Capture times match within 10 seconds."));
                 return 38;
             }
             if (seconds <= 60) {
                 reasons.add("capture times match within 1 minute");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 30, "Capture times match within 1 minute."));
                 return 30;
             }
             if (seconds <= 300) {
                 reasons.add("capture times match within 5 minutes");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 22, "Capture times match within 5 minutes."));
                 return 22;
             }
             if (seconds <= 3600) {
                 reasons.add("capture times match within 1 hour");
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 12, "Capture times match within 1 hour."));
                 return 12;
             }
             return 0;
@@ -285,54 +313,69 @@ public final class MatchEngine {
         long lastModifiedSeconds = Math.abs(Duration.between(finished.lastModified(), raw.lastModified()).toSeconds());
         if (lastModifiedSeconds <= 60) {
             reasons.add("file modified times are close");
+            details.add(new MatchScoreDetail("modifiedTimestamp", "Modified timestamp", 14, 14, "File modified times are within 1 minute; used only when capture time is missing."));
             return 14;
         }
         if (lastModifiedSeconds <= 3600) {
             reasons.add("file modified times are within 1 hour");
+            details.add(new MatchScoreDetail("modifiedTimestamp", "Modified timestamp", 14, 8, "File modified times are within 1 hour; used only when capture time is missing."));
             return 8;
         }
         return 0;
     }
 
-    private int metadataScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
+    private int metadataScore(PhotoFile finished, PhotoFile raw, List<String> reasons, List<MatchScoreDetail> details) {
         int score = 0;
+        int cameraPoints = 0;
+        List<String> cameraNotes = new ArrayList<>();
         if (!finished.make().isBlank() && !raw.make().isBlank() && same(finished.make(), raw.make())) {
             reasons.add("same camera make");
-            score += 2;
+            cameraPoints += 2;
+            cameraNotes.add("same make");
         }
         if (!finished.model().isBlank() && !raw.model().isBlank() && same(finished.model(), raw.model())) {
             reasons.add("same camera model");
-            score += 5;
+            cameraPoints += 5;
+            cameraNotes.add("same model");
+        }
+        if (cameraPoints > 0) {
+            details.add(new MatchScoreDetail("cameraType", "Camera", 7, cameraPoints, String.join(", ", cameraNotes)));
+            score += cameraPoints;
         }
         if (!finished.lensModel().isBlank() && !raw.lensModel().isBlank()
                 && same(finished.lensModel(), raw.lensModel())) {
             reasons.add("same lens model");
+            details.add(new MatchScoreDetail("lensModel", "Lens", 3, 3, "Same lens model."));
             score += 3;
         }
         if (sameNumber(finished.fNumber(), raw.fNumber(), 0.01)) {
             reasons.add("same aperture");
+            details.add(new MatchScoreDetail("fNumber", "Aperture", 2, 2, "Same aperture."));
             score += 2;
         }
         if (sameNumber(finished.focalLength(), raw.focalLength(), 0.1)) {
             reasons.add("same focal length");
+            details.add(new MatchScoreDetail("focalLength", "Focal length", 2, 2, "Same focal length."));
             score += 2;
         }
         if (finished.iso() != null && raw.iso() != null && finished.iso().equals(raw.iso())) {
             reasons.add("same ISO");
+            details.add(new MatchScoreDetail("iso", "ISO", 2, 2, "Same ISO."));
             score += 2;
         }
         if (sameExposureTime(finished.exposureTime(), raw.exposureTime())) {
             reasons.add("same exposure time");
+            details.add(new MatchScoreDetail("exposureTime", "Exposure time", 2, 2, "Same or equivalent exposure time."));
             score += 2;
         }
         return score;
     }
 
-    private int visualScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
+    private int visualScore(PhotoFile finished, PhotoFile raw, List<String> reasons, List<MatchScoreDetail> details) {
         return 0;
     }
 
-    private int folderDateScore(PhotoFile finished, PhotoFile raw, List<String> reasons) {
+    private int folderDateScore(PhotoFile finished, PhotoFile raw, List<String> reasons, List<MatchScoreDetail> details) {
         if (finished.captureTime() == null) {
             return 0;
         }
@@ -344,9 +387,14 @@ public final class MatchEngine {
         if (path.contains("/" + year + "/" + month + "/" + day + "/")
                 || path.contains("/" + year + "/" + captureDate.getMonthValue() + "/" + captureDate.getDayOfMonth() + "/")) {
             reasons.add("RAW folder date matches capture date");
+            details.add(new MatchScoreDetail("folderDate", "RAW folder date", 4, 4, "RAW folder date matches the final capture date."));
             return 4;
         }
         return 0;
+    }
+
+    private boolean cameraModelsConflict(PhotoFile finished, PhotoFile raw) {
+        return !finished.model().isBlank() && !raw.model().isBlank() && !same(finished.model(), raw.model());
     }
 
     private boolean same(String first, String second) {
@@ -405,6 +453,6 @@ public final class MatchEngine {
         return bigrams;
     }
 
-    private record ScoredMatch(PhotoFile raw, int score, int evidenceScore, int nameScore, String reason) {
+    private record ScoredMatch(PhotoFile raw, int score, int evidenceScore, int nameScore, String reason, List<MatchScoreDetail> scoreDetails) {
     }
 }

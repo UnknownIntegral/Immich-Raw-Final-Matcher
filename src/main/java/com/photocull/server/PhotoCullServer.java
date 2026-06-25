@@ -6,6 +6,7 @@ import com.photocull.immich.ImmichTagApplyResult;
 import com.photocull.immich.ImmichUser;
 import com.photocull.immich.ImmichWorkflow;
 import com.photocull.matcher.MatchResult;
+import com.photocull.matcher.MatchScoreDetail;
 import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.PhotoFile;
 import com.sun.net.httpserver.HttpExchange;
@@ -862,6 +863,7 @@ public final class PhotoCullServer {
         row.put("rawPath", result.rawPathOrNull());
         row.put("rawMetadata", result.raw() == null ? null : comparisonMetadata(result.raw()));
         row.put("reason", result.reason());
+        row.put("scoreDetails", scoreDetails(result.scoreDetails()));
         List<Map<String, Object>> candidates = new ArrayList<>();
         for (com.photocull.matcher.MatchCandidate candidate : result.candidates()) {
             Map<String, Object> value = new LinkedHashMap<>();
@@ -870,10 +872,25 @@ public final class PhotoCullServer {
             value.put("rawMetadata", comparisonMetadata(candidate.raw()));
             value.put("score", candidate.score());
             value.put("reason", candidate.reason());
+            value.put("scoreDetails", scoreDetails(candidate.scoreDetails()));
             candidates.add(value);
         }
         row.put("candidates", candidates);
         return row;
+    }
+
+    private List<Map<String, Object>> scoreDetails(List<MatchScoreDetail> details) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (MatchScoreDetail detail : details) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key", detail.key());
+            row.put("label", detail.label());
+            row.put("weight", detail.weight());
+            row.put("points", detail.points());
+            row.put("note", detail.note());
+            rows.add(row);
+        }
+        return rows;
     }
 
     private Map<String, Object> comparisonMetadata(PhotoFile file) {

@@ -1,6 +1,7 @@
 package com.photocull.server;
 
 import com.photocull.matcher.MatchResult;
+import com.photocull.matcher.MatchScoreDetail;
 import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.MatchCandidate;
 import com.photocull.matcher.PhotoFile;
@@ -74,6 +75,7 @@ final class SessionStore {
             row.put("score", result.score());
             row.put("reason", result.reason());
             row.put("status", result.status().name());
+            row.put("scoreDetails", scoreDetailsJson(result.scoreDetails()));
             List<Map<String, Object>> candidates = new ArrayList<>();
             for (MatchCandidate candidate : result.candidates()) {
                 Integer rawIndex = rawIndexes.get(candidate.raw().path());
@@ -84,6 +86,7 @@ final class SessionStore {
                 candidateRow.put("rawIndex", rawIndex);
                 candidateRow.put("score", candidate.score());
                 candidateRow.put("reason", candidate.reason());
+                candidateRow.put("scoreDetails", scoreDetailsJson(candidate.scoreDetails()));
                 candidates.add(candidateRow);
             }
             row.put("candidates", candidates);
@@ -119,10 +122,10 @@ final class SessionStore {
                     continue;
                 }
                 candidates.add(new MatchCandidate(raws.get(candidateRawIndex), number(candidateRow.get("score"), 0),
-                        string(candidateRow.get("reason"), "")));
+                        string(candidateRow.get("reason"), ""), scoreDetails(candidateRow.get("scoreDetails"))));
             }
             results.add(new MatchResult(finals.get(finalIndex), raw, number(row.get("score"), 0),
-                    string(row.get("reason"), ""), status, null, candidates));
+                    string(row.get("reason"), ""), status, null, candidates, scoreDetails(row.get("scoreDetails"))));
         }
         return ScanSession.restored(instant(values.get("createdAt")), raws, finals, results,
                 number(values.get("autoAcceptThreshold"), 90), number(values.get("autoRejectThreshold"), 50),
@@ -154,6 +157,35 @@ final class SessionStore {
         values.put("exposureTime", photo.exposureTime());
         values.put("contentHash", photo.contentHash());
         return values;
+    }
+
+    private List<Map<String, Object>> scoreDetailsJson(List<MatchScoreDetail> details) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (MatchScoreDetail detail : details) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key", detail.key());
+            row.put("label", detail.label());
+            row.put("weight", detail.weight());
+            row.put("points", detail.points());
+            row.put("note", detail.note());
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    private List<MatchScoreDetail> scoreDetails(Object value) {
+        List<MatchScoreDetail> details = new ArrayList<>();
+        for (Object item : array(value)) {
+            Map<String, Object> row = object(item);
+            details.add(new MatchScoreDetail(
+                    string(row.get("key"), ""),
+                    string(row.get("label"), ""),
+                    number(row.get("weight"), 0),
+                    number(row.get("points"), 0),
+                    string(row.get("note"), "")
+            ));
+        }
+        return details;
     }
 
     private PhotoFile photo(Map<String, Object> values) {

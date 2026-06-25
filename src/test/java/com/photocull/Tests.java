@@ -3,6 +3,7 @@ package com.photocull;
 import com.photocull.matcher.MatchEngine;
 import com.photocull.matcher.MatchCandidate;
 import com.photocull.matcher.MatchResult;
+import com.photocull.matcher.MatchScoreDetail;
 import com.photocull.matcher.MatchStatus;
 import com.photocull.matcher.PhotoFile;
 import com.photocull.immich.ImmichApi;
@@ -50,6 +51,7 @@ public final class Tests {
         tagsOnlyLowerFileSizeDuplicateFinals();
         autoRejectsLowScoresOutsideReviewQueue();
         rejectsFilenameMatchesWithDifferentCaptureDates();
+        rejectsMatchesWithDifferentCameraModels();
         usesRawExifDetailsForMatching();
         autoAcceptsUniqueExactTimestamp();
         autoAcceptsExactTimestampWithOtherCandidates();
@@ -336,11 +338,28 @@ public final class Tests {
         MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
 
         assertEquals(94, match.score(), "lens and exposure EXIF adds corroborating matching evidence");
+        assertEquals(7, detail(match.scoreDetails(), "cameraType").points(), "camera make and model points are visible");
+        assertEquals(3, detail(match.scoreDetails(), "lensModel").points(), "lens points are visible");
+        assertEquals(2, detail(match.scoreDetails(), "fNumber").points(), "aperture points are visible");
         assertTrue(match.reason().contains("same lens model"), "lens evidence is recorded");
         assertTrue(match.reason().contains("same aperture"), "aperture evidence is recorded");
         assertTrue(match.reason().contains("same focal length"), "focal-length evidence is recorded");
         assertTrue(match.reason().contains("same ISO"), "ISO evidence is recorded");
         assertTrue(match.reason().contains("same exposure time"), "equivalent exposure values are matched");
+    }
+
+    private static void rejectsMatchesWithDifferentCameraModels() {
+        Instant captureTime = Instant.parse("2025-05-12T17:32:09Z");
+        PhotoFile raw = PhotoFile.fromImmichAsset("raw-1", "raw-owner", "IMG_0001.CR3", "/raw/IMG_0001.CR3", 1,
+                captureTime, captureTime, "Canon", "EOS R6m2", "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200", null);
+        PhotoFile finished = PhotoFile.fromImmichAsset("final-1", "final-owner", "IMG_0001.jpg", "/final/IMG_0001.jpg", 1,
+                captureTime, captureTime, "Apple", "iPhone 13", "iPhone 13 back dual wide camera", 2.8, 50.0, 400, "1/200", null);
+
+        MatchResult match = new MatchEngine().match(List.of(raw), List.of(finished), 90, 50, ignored -> { }).get(0);
+
+        assertEquals(0, match.score(), "different camera models force a zero score");
+        assertEquals(null, match.raw(), "different camera models produce no RAW match");
+        assertEquals(MatchStatus.AUTO_REJECTED, match.status(), "different camera models stay out of review");
     }
 
     private static void updatesCachedSessionMetricsDuringReview() {
@@ -956,6 +975,13 @@ public final class Tests {
         if (!condition) {
             throw new AssertionError(label + ": expected true");
         }
+    }
+
+    private static MatchScoreDetail detail(List<MatchScoreDetail> details, String key) {
+        return details.stream()
+                .filter(detail -> detail.key().equals(key))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing score detail " + key));
     }
 
     private static final class RecordingImmichApi implements ImmichApi {

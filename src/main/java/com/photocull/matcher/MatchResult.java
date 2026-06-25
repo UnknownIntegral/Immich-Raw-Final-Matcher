@@ -10,7 +10,8 @@ public record MatchResult(
         String reason,
         MatchStatus status,
         Path movedTo,
-        List<MatchCandidate> candidates
+        List<MatchCandidate> candidates,
+        List<MatchScoreDetail> scoreDetails
 ) {
     public MatchResult(
             PhotoFile finished,
@@ -20,11 +21,24 @@ public record MatchResult(
             MatchStatus status,
             Path movedTo
     ) {
-        this(finished, raw, score, reason, status, movedTo, raw == null ? List.of() : List.of(new MatchCandidate(raw, score, reason)));
+        this(finished, raw, score, reason, status, movedTo, raw == null ? List.of() : List.of(new MatchCandidate(raw, score, reason)), List.of());
+    }
+
+    public MatchResult(
+            PhotoFile finished,
+            PhotoFile raw,
+            int score,
+            String reason,
+            MatchStatus status,
+            Path movedTo,
+            List<MatchCandidate> candidates
+    ) {
+        this(finished, raw, score, reason, status, movedTo, candidates, List.of());
     }
 
     public MatchResult {
         candidates = candidates == null ? List.of() : List.copyOf(candidates);
+        scoreDetails = scoreDetails == null ? List.of() : List.copyOf(scoreDetails);
     }
 
     public Path rawPathOrNull() {
@@ -36,11 +50,11 @@ public record MatchResult(
     }
 
     public MatchResult withStatus(MatchStatus newStatus) {
-        return new MatchResult(finished, raw, score, reason, newStatus, movedTo, candidates);
+        return new MatchResult(finished, raw, score, reason, newStatus, movedTo, candidates, scoreDetails);
     }
 
     public MatchResult withMoveStatus(MatchStatus newStatus, Path target) {
-        return new MatchResult(finished, raw, score, reason, newStatus, target, candidates);
+        return new MatchResult(finished, raw, score, reason, newStatus, target, candidates, scoreDetails);
     }
 
     public MatchResult withSelectedRaw(PhotoFile selectedRaw) {
@@ -51,7 +65,7 @@ public record MatchResult(
                 .filter(item -> sameAsset(item.raw(), selectedRaw))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("The selected RAW is not a candidate for this final image."));
-        return new MatchResult(finished, selectedRaw, candidate.score(), candidate.reason(), status, movedTo, candidates);
+        return new MatchResult(finished, selectedRaw, candidate.score(), candidate.reason(), status, movedTo, candidates, candidate.scoreDetails());
     }
 
     private boolean sameAsset(PhotoFile first, PhotoFile second) {
