@@ -28,6 +28,8 @@ public record ImmichAsset(
         Double focalLength,
         Integer iso,
         String exposureTime,
+        Integer imageWidth,
+        Integer imageHeight,
         long sizeBytes
 ) {
     public ImmichAsset(
@@ -36,7 +38,7 @@ public record ImmichAsset(
             boolean trashed, String make, String model, long sizeBytes
     ) {
         this(id, ownerId, originalFileName, originalPath, originalMimeType, type, checksum, fileCreatedAt,
-                fileModifiedAt, localDateTime, trashed, make, model, "", null, null, null, "", sizeBytes);
+                fileModifiedAt, localDateTime, trashed, make, model, "", null, null, null, "", null, null, sizeBytes);
     }
 
     public static ImmichAsset fromJson(Map<String, Object> values) {
@@ -60,6 +62,8 @@ public record ImmichAsset(
                 decimal(exif.get("focalLength")),
                 integer(exif.get("iso")),
                 string(exif.get("exposureTime")),
+                firstInteger(exif.get("exifImageWidth"), exif.get("imageWidth"), values.get("exifImageWidth"), values.get("imageWidth")),
+                firstInteger(exif.get("exifImageHeight"), exif.get("imageHeight"), values.get("exifImageHeight"), values.get("imageHeight")),
                 number(exif.get("fileSizeInByte"))
         );
     }
@@ -80,7 +84,9 @@ public record ImmichAsset(
                 focalLength,
                 iso,
                 exposureTime,
-                checksum
+                checksum,
+                imageWidth,
+                imageHeight
         );
     }
 
@@ -140,6 +146,16 @@ public record ImmichAsset(
         } catch (NumberFormatException ignored) {
             return null;
         }
+    }
+
+    private static Integer firstInteger(Object... values) {
+        for (Object value : values) {
+            Integer parsed = integer(value);
+            if (parsed != null && parsed > 0) {
+                return parsed;
+            }
+        }
+        return null;
     }
 
     private static Instant instant(Object value) {

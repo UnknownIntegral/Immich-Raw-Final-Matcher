@@ -45,6 +45,7 @@ public final class Tests {
         normalizesImmichApiUrls();
         usesResilientImmichMutationDefaults();
         buildsImmichPhotoFiles();
+        parsesImmichImageOrientation();
         createsAssetIdTagPlans();
         separatesUnusedAndFinalNotFoundRawTags();
         createsFinalAccountTagPlans();
@@ -66,6 +67,7 @@ public final class Tests {
         providesReviewComparisonMetadata();
         separatesExactAndPossibleDuplicates();
         flagsFinalsWithMultipleStrongRawCandidates();
+        prioritizesSameOrientationRawCandidates();
         requiresAccountSpecificImmichApiKeys();
         scansRawAndFinalAssetsWithSeparateClients();
         appliesTagsWithSideSpecificClients();
@@ -151,6 +153,22 @@ public final class Tests {
         assertEquals(50.0, exifRaw.focalLength(), "focal-length metadata is retained");
         assertEquals(400, exifRaw.iso(), "ISO metadata is retained");
         assertEquals("1/200", exifRaw.exposureTime(), "exposure metadata is retained");
+    }
+
+    private static void parsesImmichImageOrientation() {
+        ImmichAsset parsed = ImmichAsset.fromJson(Json.parseObject("""
+                {"id":"portrait-exif","ownerId":"raw-owner","originalFileName":"IMG_1234.CR3",
+                "originalPath":"/upload/raw/IMG_1234.CR3","type":"IMAGE","checksum":"checksum",
+                "fileCreatedAt":"2024-01-01T10:00:00Z","fileModifiedAt":"2024-01-01T10:00:00Z",
+                "localDateTime":"2024-01-01T10:00:00Z","exifInfo":{"exifImageWidth":4000,
+                "exifImageHeight":6000,"fileSizeInByte":42}}
+                """));
+
+        PhotoFile photo = parsed.toPhotoFile();
+
+        assertEquals(4000, photo.imageWidth(), "image width is retained");
+        assertEquals(6000, photo.imageHeight(), "image height is retained");
+        assertEquals("portrait", photo.orientation(), "portrait orientation is derived from dimensions");
     }
 
     private static void createsAssetIdTagPlans() {
@@ -684,6 +702,26 @@ public final class Tests {
         assertEquals(MatchStatus.NEEDS_REVIEW, result.status(), "ambiguous raw match status");
         assertTrue(result.reason().contains("multiple strong RAW candidates"), "ambiguous raw match reason");
         assertEquals(2, result.candidates().size(), "ambiguous match retains review candidates");
+    }
+
+    private static void prioritizesSameOrientationRawCandidates() {
+        Instant captureTime = Instant.parse("2024-01-01T10:00:00Z");
+        PhotoFile portraitRaw = PhotoFile.fromImmichAsset(
+                "raw-portrait", "raw-owner", "PORTRAIT_0001.CR3", "/raw/PORTRAIT_0001.CR3", 1,
+                captureTime, captureTime, "", "", "", null, null, null, "", null, 3000, 4500);
+        PhotoFile landscapeRaw = PhotoFile.fromImmichAsset(
+                "raw-landscape", "raw-owner", "LANDSCAPE_0001.CR3", "/raw/LANDSCAPE_0001.CR3", 1,
+                captureTime, captureTime, "", "", "", null, null, null, "", null, 4500, 3000);
+        PhotoFile finished = PhotoFile.fromImmichAsset(
+                "final-portrait", "final-owner", "EXPORT_0001.jpg", "/final/EXPORT_0001.jpg", 1,
+                captureTime, captureTime, "", "", "", null, null, null, "", null, 2000, 3000);
+
+        MatchResult result = new MatchEngine().match(List.of(landscapeRaw, portraitRaw), List.of(finished), 90, 50, ignored -> {
+        }).get(0);
+
+        assertEquals("portrait", finished.orientation(), "finished image orientation");
+        assertEquals("raw-portrait", result.raw().immichAssetId(), "portrait RAW candidate is preferred");
+        assertEquals("raw-portrait", result.candidates().get(0).raw().immichAssetId(), "portrait RAW is first in review candidates");
     }
 
     private static void requiresAccountSpecificImmichApiKeys() {

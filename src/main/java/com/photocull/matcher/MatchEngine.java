@@ -19,6 +19,7 @@ public final class MatchEngine {
     private static final int AMBIGUOUS_RAW_MATCH_MARGIN = 8;
     private static final int AMBIGUOUS_RAW_MATCH_MIN_SCORE = 70;
     private static final int SAME_DAY_TIMESTAMP_CONFLICT_CAP = 89;
+    private static final int REVIEW_CANDIDATE_LIMIT = 24;
 
     public List<MatchResult> match(
             List<PhotoFile> rawFiles,
@@ -57,13 +58,14 @@ public final class MatchEngine {
                     .map(raw -> score(finished, raw))
                     .filter(match -> match.score() > 0)
                     .sorted(Comparator.comparingInt(ScoredMatch::score).reversed()
+                            .thenComparing(Comparator.<ScoredMatch>comparingInt(match -> orientationSortScore(finished, match.raw())).reversed())
                             .thenComparing(Comparator.comparingInt(ScoredMatch::evidenceScore).reversed())
                             .thenComparing(Comparator.comparingInt(ScoredMatch::nameScore).reversed())
                             .thenComparing(match -> match.raw().path().toString()))
                     .toList();
             ScoredMatch best = scoredCandidates.isEmpty() ? null : scoredCandidates.get(0);
             List<MatchCandidate> reviewCandidates = scoredCandidates.stream()
-                    .limit(5)
+                    .limit(REVIEW_CANDIDATE_LIMIT)
                     .map(match -> new MatchCandidate(match.raw(), match.score(), match.reason(), match.scoreDetails()))
                     .toList();
 
@@ -170,6 +172,16 @@ public final class MatchEngine {
         return first.captureTime() != null && first.captureTime().equals(second.captureTime());
     }
 
+    private int orientationSortScore(PhotoFile finished, PhotoFile raw) {
+        if (finished.sameOrientation(raw)) {
+            return 2;
+        }
+        if (!finished.orientation().isBlank() && !raw.orientation().isBlank()) {
+            return 0;
+        }
+        return 1;
+    }
+
     private ScoredMatch score(PhotoFile finished, PhotoFile raw) {
         List<String> reasons = new ArrayList<>();
         List<MatchScoreDetail> details = new ArrayList<>();
@@ -184,6 +196,7 @@ public final class MatchEngine {
         int timeScore = timeScore(finished, raw, reasons, details);
         int visualScore = visualScore(finished, raw, reasons, details);
         int metadataScore = metadataScore(finished, raw, reasons, details);
+        int orientationScore = orientationScore(finished, raw, reasons, details);
         int folderDateScore = folderDateScore(finished, raw, reasons, details);
 
         int evidenceScore = Math.max(Math.max(nameScore, timeScore), visualScore);
@@ -198,7 +211,7 @@ public final class MatchEngine {
             evidenceScore += 8;
             details.add(new MatchScoreDetail("visualBonus", "Visual + metadata bonus", 8, 8, "Strong visual evidence reinforces filename or time evidence."));
         }
-        evidenceScore += metadataScore + folderDateScore;
+        evidenceScore += metadataScore + orientationScore + folderDateScore;
         int score = Math.max(0, Math.min(100, evidenceScore));
         int cap = timestampConflictCap(finished, raw, reasons);
         if (cap < score) {
@@ -275,38 +288,38 @@ public final class MatchEngine {
             // Near timestamps are common in a burst, so they remain review-level signals.
             if (seconds == 0) {
                 reasons.add("capture times are less than 1 second apart");
-                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 60, "Capture times are less than 1 second apart."));
-                return 60;
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 44, "Capture times are less than 1 second apart; same-day time proximity is supporting evidence only."));
+                return 44;
             }
             if (seconds == 1) {
                 reasons.add("capture times are 1 second apart");
-                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 52, "Capture times are 1 second apart."));
-                return 52;
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 38, "Capture times are 1 second apart; same-day time proximity is supporting evidence only."));
+                return 38;
             }
             if (seconds <= 2) {
                 reasons.add("capture times are 2 seconds apart");
-                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 44, "Capture times are 2 seconds apart."));
-                return 44;
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 34, "Capture times are 2 seconds apart; same-day time proximity is supporting evidence only."));
+                return 34;
             }
             if (seconds <= 10) {
                 reasons.add("capture times match within 10 seconds");
-                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 38, "Capture times match within 10 seconds."));
-                return 38;
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 28, "Capture times match within 10 seconds; same-day time proximity is supporting evidence only."));
+                return 28;
             }
             if (seconds <= 60) {
                 reasons.add("capture times match within 1 minute");
-                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 30, "Capture times match within 1 minute."));
-                return 30;
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 22, "Capture times match within 1 minute; same-day time proximity is supporting evidence only."));
+                return 22;
             }
             if (seconds <= 300) {
                 reasons.add("capture times match within 5 minutes");
-                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 22, "Capture times match within 5 minutes."));
-                return 22;
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 16, "Capture times match within 5 minutes; same-day time proximity is supporting evidence only."));
+                return 16;
             }
             if (seconds <= 3600) {
                 reasons.add("capture times match within 1 hour");
-                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 12, "Capture times match within 1 hour."));
-                return 12;
+                details.add(new MatchScoreDetail("captureTimestamp", "Capture timestamp", 100, 6, "Capture times match within 1 hour; same-day time proximity is supporting evidence only."));
+                return 6;
             }
             return 0;
         }
@@ -373,6 +386,19 @@ public final class MatchEngine {
     }
 
     private int visualScore(PhotoFile finished, PhotoFile raw, List<String> reasons, List<MatchScoreDetail> details) {
+        return 0;
+    }
+
+    private int orientationScore(PhotoFile finished, PhotoFile raw, List<String> reasons, List<MatchScoreDetail> details) {
+        if (finished.sameOrientation(raw)) {
+            String orientation = finished.orientation();
+            reasons.add("same " + orientation + " orientation");
+            details.add(new MatchScoreDetail("orientation", "Orientation", 4, 4, "Both images are " + orientation + "."));
+            return 4;
+        }
+        if (!finished.orientation().isBlank() && !raw.orientation().isBlank()) {
+            details.add(new MatchScoreDetail("orientation", "Orientation", 4, 0, "Image orientations differ."));
+        }
         return 0;
     }
 

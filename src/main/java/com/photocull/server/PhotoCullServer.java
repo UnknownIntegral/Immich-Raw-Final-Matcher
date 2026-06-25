@@ -904,6 +904,9 @@ public final class PhotoCullServer {
         metadata.put("focalLength", file.focalLength());
         metadata.put("iso", file.iso());
         metadata.put("exposureTime", file.exposureTime());
+        metadata.put("orientation", file.orientation());
+        metadata.put("dimensions", file.imageWidth() == null || file.imageHeight() == null
+                ? "" : file.imageWidth() + " x " + file.imageHeight());
         metadata.put("modifiedTimestamp", file.lastModified());
         return metadata;
     }

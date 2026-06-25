@@ -155,6 +155,8 @@ final class SessionStore {
         values.put("focalLength", photo.focalLength());
         values.put("iso", photo.iso());
         values.put("exposureTime", photo.exposureTime());
+        values.put("imageWidth", photo.imageWidth());
+        values.put("imageHeight", photo.imageHeight());
         values.put("contentHash", photo.contentHash());
         return values;
     }
@@ -195,7 +197,8 @@ final class SessionStore {
                 fileName, path, numberLong(values.get("sizeBytes"), 0), instant(values.get("lastModified")),
                 instantOrNull(values.get("captureTime")), string(values.get("make"), ""), string(values.get("model"), ""),
                 string(values.get("lensModel"), ""), decimal(values.get("fNumber")), decimal(values.get("focalLength")),
-                integerOrNull(values.get("iso")), string(values.get("exposureTime"), ""), string(values.get("contentHash"), null));
+                integerOrNull(values.get("iso")), string(values.get("exposureTime"), ""), string(values.get("contentHash"), null),
+                integerOrNull(values.get("imageWidth")), integerOrNull(values.get("imageHeight")));
     }
 
     @SuppressWarnings("unchecked")

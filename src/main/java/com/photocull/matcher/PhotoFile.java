@@ -27,7 +27,9 @@ public record PhotoFile(
         Double fNumber,
         Double focalLength,
         Integer iso,
-        String exposureTime
+        String exposureTime,
+        Integer imageWidth,
+        Integer imageHeight
 ) {
     private static final Pattern TRAILING_NUMBER = Pattern.compile("(\\d{3,})$");
 
@@ -43,7 +45,7 @@ public record PhotoFile(
             String model
     ) {
         return fromImmichAsset(assetId, ownerId, originalFileName, originalPath, sizeBytes, fileModifiedAt,
-                captureTime, make, model, "", null, null, null, "", null);
+                captureTime, make, model, "", null, null, null, "", null, null, null);
     }
 
     public static PhotoFile fromImmichAsset(
@@ -59,7 +61,7 @@ public record PhotoFile(
             String contentHash
     ) {
         return fromImmichAsset(assetId, ownerId, originalFileName, originalPath, sizeBytes, fileModifiedAt,
-                captureTime, make, model, "", null, null, null, "", contentHash);
+                captureTime, make, model, "", null, null, null, "", contentHash, null, null);
     }
 
     public static PhotoFile fromImmichAsset(
@@ -78,6 +80,29 @@ public record PhotoFile(
             Integer iso,
             String exposureTime,
             String contentHash
+    ) {
+        return fromImmichAsset(assetId, ownerId, originalFileName, originalPath, sizeBytes, fileModifiedAt,
+                captureTime, make, model, lensModel, fNumber, focalLength, iso, exposureTime, contentHash, null, null);
+    }
+
+    public static PhotoFile fromImmichAsset(
+            String assetId,
+            String ownerId,
+            String originalFileName,
+            String originalPath,
+            long sizeBytes,
+            Instant fileModifiedAt,
+            Instant captureTime,
+            String make,
+            String model,
+            String lensModel,
+            Double fNumber,
+            Double focalLength,
+            Integer iso,
+            String exposureTime,
+            String contentHash,
+            Integer imageWidth,
+            Integer imageHeight
     ) {
         String fileName = firstNonBlank(originalFileName, fileName(originalPath), assetId);
         String extension = extension(fileName);
@@ -103,8 +128,22 @@ public record PhotoFile(
                 fNumber,
                 focalLength,
                 iso,
-                blankIfNull(exposureTime)
+                blankIfNull(exposureTime),
+                positiveOrNull(imageWidth),
+                positiveOrNull(imageHeight)
         );
+    }
+
+    public String orientation() {
+        if (imageWidth == null || imageHeight == null || imageWidth.equals(imageHeight)) {
+            return "";
+        }
+        return imageHeight > imageWidth ? "portrait" : "landscape";
+    }
+
+    public boolean sameOrientation(PhotoFile other) {
+        String ownOrientation = orientation();
+        return !ownOrientation.isBlank() && ownOrientation.equals(other.orientation());
     }
 
     private static String extension(String fileName) {
@@ -161,5 +200,9 @@ public record PhotoFile(
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private static Integer positiveOrNull(Integer value) {
+        return value == null || value <= 0 ? null : value;
     }
 }
