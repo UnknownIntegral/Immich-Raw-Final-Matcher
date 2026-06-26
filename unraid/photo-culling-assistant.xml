@@ -9,6 +9,7 @@
   <Project>https://github.com/UnknownIntegral/Immich-Raw-Final-Matcher</Project>
   <Overview>Matches RAW assets from one Immich account to final images from another, lets you review uncertain matches, and applies decision tags through the Immich API. It never moves or deletes media files.</Overview>
   <Category>MediaApp:Photos Productivity: Tools:</Category>
+  <Icon>https://raw.githubusercontent.com/UnknownIntegral/Immich-Raw-Final-Matcher/main/assets/icon.png</Icon>
   <WebUI>http://[IP]:[PORT:8356]</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/UnknownIntegral/Immich-Raw-Final-Matcher/main/unraid/photo-culling-assistant.xml</TemplateURL>
   <Config Name="Web UI port" Target="8356" Default="8356" Mode="tcp" Description="Web UI port." Type="Port" Display="always" Required="true" Mask="false"/>
