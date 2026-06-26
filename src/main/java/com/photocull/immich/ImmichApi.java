@@ -31,6 +31,8 @@ public interface ImmichApi {
 
     ImmichAlbum ensureAlbum(String name) throws IOException, InterruptedException;
 
+    List<String> albumAssetIds(String albumId) throws IOException, InterruptedException;
+
     int addAssetsToAlbum(String albumId, List<String> assetIds) throws IOException, InterruptedException;
 
     int removeAssetsFromAlbum(String albumId, List<String> assetIds) throws IOException, InterruptedException;

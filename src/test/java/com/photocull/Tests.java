@@ -75,6 +75,7 @@ public final class Tests {
         testsPermissionsForEachAccountSpecificKey();
         freezesExactPlanBeforeApplying();
         reconcilesStaleDecisionTags();
+        clearsManagedAlbumsBeforeRepopulatingThem();
         omitsApiKeysFromStatusJson();
         reportsStateRestoreProgress();
     }
@@ -924,6 +925,33 @@ public final class Tests {
         assertTrue(finalApi.untaggedAssetIds.contains("final-unmatched"), "removes stale RAW Found tag from unmatched final");
     }
 
+    private static void clearsManagedAlbumsBeforeRepopulatingThem() throws IOException, InterruptedException {
+        RecordingImmichApi rawApi = new RecordingImmichApi();
+        RecordingImmichApi finalApi = new RecordingImmichApi();
+        rawApi.visibleAlbums.add(new ImmichAlbum("album-PCA - Keeper RAWs", "PCA - Keeper RAWs"));
+        rawApi.visibleAlbums.add(new ImmichAlbum("album-PCA - Unused RAWs", "PCA - Unused RAWs"));
+        rawApi.albumAssetsById.put("album-PCA - Keeper RAWs", new ArrayList<>(List.of("stale-keeper", "raw-keeper")));
+        rawApi.albumAssetsById.put("album-PCA - Unused RAWs", new ArrayList<>(List.of("stale-unused")));
+
+        PhotoFile keeper = photo("raw-keeper", "raw-user", "IMG_0001.CR3");
+        PhotoFile finished = photo("final-matched", "final-user", "IMG_0001.jpg");
+        ScanSession session = new ScanSession(
+                List.of(keeper), List.of(finished),
+                List.of(new MatchResult(finished, keeper, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null)),
+                90, 50
+        );
+
+        new ImmichWorkflow(config("raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi)
+                .applyTags(session, Path.of("build", "test-manifests"));
+
+        assertEquals(List.of("raw-keeper"), rawApi.albumAssetsById.get("album-PCA - Keeper RAWs"),
+                "keeper Album is cleared before the current keeper is restored");
+        assertEquals(List.of(), rawApi.albumAssetsById.get("album-PCA - Unused RAWs"),
+                "empty current decisions still clear their configured Album");
+        assertTrue(rawApi.removedAlbumAssetIds.contains("stale-keeper"), "stale keeper membership removed");
+        assertTrue(rawApi.removedAlbumAssetIds.contains("stale-unused"), "empty decision Album cleared");
+    }
+
     private static void omitsApiKeysFromStatusJson() throws Exception {
         ImmichConfig config = new ImmichConfig(
                 "http://immich.local/api",
@@ -1102,8 +1130,10 @@ public final class Tests {
         private final List<String> taggedAssetIds = new ArrayList<>();
         private final List<String> untaggedAssetIds = new ArrayList<>();
         private final List<String> albumAssetIds = new ArrayList<>();
+        private final List<String> removedAlbumAssetIds = new ArrayList<>();
         private final List<ImmichTag> visibleTags = new ArrayList<>();
         private final List<ImmichAlbum> visibleAlbums = new ArrayList<>();
+        private final Map<String, List<String>> albumAssetsById = new java.util.LinkedHashMap<>();
 
         private RecordingImmichApi() {
             this(List.of());
@@ -1173,14 +1203,22 @@ public final class Tests {
         }
 
         @Override
+        public List<String> albumAssetIds(String albumId) {
+            return List.copyOf(albumAssetsById.getOrDefault(albumId, List.of()));
+        }
+
+        @Override
         public int addAssetsToAlbum(String albumId, List<String> assetIds) {
             albumAssetIds.addAll(assetIds);
+            albumAssetsById.computeIfAbsent(albumId, ignored -> new ArrayList<>()).addAll(assetIds);
             return assetIds.size();
         }
 
         @Override
         public int removeAssetsFromAlbum(String albumId, List<String> assetIds) {
             albumAssetIds.removeAll(assetIds);
+            removedAlbumAssetIds.addAll(assetIds);
+            albumAssetsById.computeIfAbsent(albumId, ignored -> new ArrayList<>()).removeAll(assetIds);
             return assetIds.size();
         }
 

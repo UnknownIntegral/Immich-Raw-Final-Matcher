@@ -158,6 +158,12 @@ public final class ImmichClient implements ImmichApi {
     }
 
     @Override
+    public List<String> albumAssetIds(String albumId) throws IOException, InterruptedException {
+        Map<String, Object> album = Json.parseObject(send("GET", "/albums/" + segment(albumId), null));
+        return assetIdsFrom(album.get("assets"));
+    }
+
+    @Override
     public int addAssetsToAlbum(String albumId, List<String> assetIds) throws IOException, InterruptedException {
         return updateAlbumAssets("PUT", albumId, assetIds);
     }
@@ -218,6 +224,21 @@ public final class ImmichClient implements ImmichApi {
             }
         }
         return affected;
+    }
+
+    private static List<String> assetIdsFrom(Object value) {
+        Object assets = value;
+        if (assets instanceof Map<?, ?> map) {
+            assets = map.get("items");
+        }
+        List<String> ids = new ArrayList<>();
+        for (Object item : array(assets)) {
+            String id = string(object(item).get("id"));
+            if (!id.isBlank()) {
+                ids.add(id);
+            }
+        }
+        return ids;
     }
 
     @Override
@@ -432,5 +453,9 @@ public final class ImmichClient implements ImmichApi {
 
     private static List<Object> array(Object value) {
         return value instanceof List<?> list ? new ArrayList<>(list) : List.of();
+    }
+
+    private static String string(Object value) {
+        return value == null ? "" : value.toString();
     }
 }

@@ -298,7 +298,7 @@ public final class ImmichWorkflow {
     }
 
     private int execute(PlanApplyOperation.Step step, IntConsumer checkpoint) throws IOException, InterruptedException {
-        if (step.assetIds().isEmpty()) {
+        if (step.assetIds().isEmpty() && step.mutation() != PlanApplyOperation.Mutation.CLEAR) {
             return 0;
         }
         ImmichApi client = ImmutableTagPlan.RAW.equals(step.account()) ? rawClient : finalClient;
@@ -311,6 +311,9 @@ public final class ImmichWorkflow {
             };
         } catch (IOException ex) {
             throw mutationFailure(side, step.resource(), step.tag(), ex);
+        }
+        if (step.mutation() == PlanApplyOperation.Mutation.CLEAR) {
+            return affected;
         }
         if (affected != step.assetIds().size()) {
             throw new IOException("Immich " + side + " " + step.mutation().name().toLowerCase()
@@ -337,6 +340,9 @@ public final class ImmichWorkflow {
 
     private int mutateAlbumStep(ImmichApi client, PlanApplyOperation.Step step, IntConsumer checkpoint)
             throws IOException, InterruptedException {
+        if (step.mutation() == PlanApplyOperation.Mutation.CLEAR) {
+            return clearAlbum(client, step.tag());
+        }
         ImmichAlbum album;
         if (step.mutation() == PlanApplyOperation.Mutation.ADD) {
             album = client.ensureAlbum(step.tag());
@@ -348,6 +354,18 @@ public final class ImmichWorkflow {
             }
         }
         return mutateAlbumInBatches(client, album.id(), step.assetIds(), step.mutation(), step.affectedAssets(), checkpoint);
+    }
+
+    private int clearAlbum(ImmichApi client, String albumName) throws IOException, InterruptedException {
+        ImmichAlbum album = existingAlbum(client, albumName);
+        if (album == null) {
+            return 0;
+        }
+        List<String> assetIds = client.albumAssetIds(album.id());
+        if (assetIds.isEmpty()) {
+            return 0;
+        }
+        return mutateAlbumInBatches(client, album.id(), assetIds, PlanApplyOperation.Mutation.REMOVE, 0, ignored -> { });
     }
 
     private ImmichTag existingTag(ImmichApi client, String name) throws IOException, InterruptedException {

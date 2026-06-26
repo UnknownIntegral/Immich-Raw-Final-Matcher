@@ -16,7 +16,7 @@ import java.util.Set;
 public final class PlanApplyOperation {
     public enum State { RUNNING, COMPLETE, FAILED }
     public enum StepState { PENDING, RUNNING, COMPLETE, FAILED }
-    public enum Mutation { ADD, REMOVE }
+    public enum Mutation { ADD, REMOVE, CLEAR }
     public enum Resource { TAG, ALBUM }
 
     private final String id;
@@ -85,6 +85,10 @@ public final class PlanApplyOperation {
                 Step.pending("add-final-duplicate", ImmutableTagPlan.FINAL, Mutation.ADD,
                         tag(tags, ImmutableTagPlan.DUPLICATE), duplicates)
         ));
+        addAlbumClearSteps(steps, ImmutableTagPlan.RAW, plan, ImmutableTagPlan.KEEPER, ImmutableTagPlan.UNUSED,
+                ImmutableTagPlan.FINAL_NOT_FOUND);
+        addAlbumClearSteps(steps, ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.RAW_FOUND, ImmutableTagPlan.NO_RAW,
+                ImmutableTagPlan.DUPLICATE);
         addAlbumStep(steps, "add-raw-keeper-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.KEEPER, keepers);
         addAlbumStep(steps, "add-raw-unused-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.UNUSED, unused);
         addAlbumStep(steps, "add-raw-final-not-found-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.FINAL_NOT_FOUND, finalNotFound);
@@ -231,6 +235,21 @@ public final class PlanApplyOperation {
             throw new IllegalArgumentException("Frozen tag plan is missing the " + decision + " tag.");
         }
         return value;
+    }
+
+    private static void addAlbumClearSteps(List<Step> steps, String account, ImmutableTagPlan plan, String... decisions) {
+        Set<String> seen = new LinkedHashSet<>();
+        for (String decision : decisions) {
+            String album = plan.decisionAlbums().get(decision);
+            if (album == null || album.isBlank()) {
+                continue;
+            }
+            String key = account.toLowerCase() + "\n" + album.toLowerCase();
+            if (seen.add(key)) {
+                steps.add(Step.pendingAlbum("clear-" + account.toLowerCase() + "-" + decision.toLowerCase() + "-album",
+                        account, Mutation.CLEAR, album, List.of()));
+            }
+        }
     }
 
     private static void addAlbumStep(
