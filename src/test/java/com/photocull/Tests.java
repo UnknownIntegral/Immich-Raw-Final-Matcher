@@ -75,7 +75,7 @@ public final class Tests {
         testsPermissionsForEachAccountSpecificKey();
         freezesExactPlanBeforeApplying();
         reconcilesStaleDecisionTags();
-        clearsManagedAlbumsBeforeRepopulatingThem();
+        reconcilesManagedAlbumsWithoutReaddingExistingMembers();
         omitsApiKeysFromStatusJson();
         reportsStateRestoreProgress();
     }
@@ -489,6 +489,8 @@ public final class Tests {
                 "same-day RAW is unused");
         assertEquals("Final not found", plan.stream().filter(item -> item.rawAssetId().equals("raw-missing")).findFirst().orElseThrow().tag(),
                 "RAW with no final date is final-not-found");
+        assertEquals(1L, session.unusedCount(), "same-day unmatched RAW count");
+        assertEquals(1L, session.finalNotFoundCount(), "RAW with no final date count");
     }
 
     private static void validatesApprovedPlanFromSessionRevision() {
@@ -925,7 +927,7 @@ public final class Tests {
         assertTrue(finalApi.untaggedAssetIds.contains("final-unmatched"), "removes stale RAW Found tag from unmatched final");
     }
 
-    private static void clearsManagedAlbumsBeforeRepopulatingThem() throws IOException, InterruptedException {
+    private static void reconcilesManagedAlbumsWithoutReaddingExistingMembers() throws IOException, InterruptedException {
         RecordingImmichApi rawApi = new RecordingImmichApi();
         RecordingImmichApi finalApi = new RecordingImmichApi();
         rawApi.visibleAlbums.add(new ImmichAlbum("album-PCA - Keeper RAWs", "PCA - Keeper RAWs"));
@@ -945,11 +947,13 @@ public final class Tests {
                 .applyTags(session, Path.of("build", "test-manifests"));
 
         assertEquals(List.of("raw-keeper"), rawApi.albumAssetsById.get("album-PCA - Keeper RAWs"),
-                "keeper Album is cleared before the current keeper is restored");
+                "keeper Album keeps the current keeper and removes only stale members");
         assertEquals(List.of(), rawApi.albumAssetsById.get("album-PCA - Unused RAWs"),
-                "empty current decisions still clear their configured Album");
+                "empty current decisions still remove stale members from their configured Album");
+        assertTrue(!rawApi.albumAssetIds.contains("raw-keeper"), "existing keeper Album member is not re-added");
         assertTrue(rawApi.removedAlbumAssetIds.contains("stale-keeper"), "stale keeper membership removed");
-        assertTrue(rawApi.removedAlbumAssetIds.contains("stale-unused"), "empty decision Album cleared");
+        assertTrue(!rawApi.removedAlbumAssetIds.contains("raw-keeper"), "current keeper membership is not removed");
+        assertTrue(rawApi.removedAlbumAssetIds.contains("stale-unused"), "empty decision Album removes stale members");
     }
 
     private static void omitsApiKeysFromStatusJson() throws Exception {

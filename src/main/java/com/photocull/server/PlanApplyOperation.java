@@ -10,13 +10,13 @@ import java.util.Set;
 
 /**
  * Persistent state for one plan application. A failed or interrupted operation
- * can safely resume: completed steps are never sent again and incomplete tag
- * adds/removals are idempotent at the Immich API boundary.
+ * can safely resume: completed steps are never sent again and incomplete
+ * membership mutations are reconciled at the Immich API boundary.
  */
 public final class PlanApplyOperation {
     public enum State { RUNNING, COMPLETE, FAILED }
     public enum StepState { PENDING, RUNNING, COMPLETE, FAILED }
-    public enum Mutation { ADD, REMOVE, CLEAR }
+    public enum Mutation { ADD, REMOVE, CLEAR, RECONCILE }
     public enum Resource { TAG, ALBUM }
 
     private final String id;
@@ -85,16 +85,17 @@ public final class PlanApplyOperation {
                 Step.pending("add-final-duplicate", ImmutableTagPlan.FINAL, Mutation.ADD,
                         tag(tags, ImmutableTagPlan.DUPLICATE), duplicates)
         ));
-        addAlbumClearSteps(steps, ImmutableTagPlan.RAW, plan, ImmutableTagPlan.KEEPER, ImmutableTagPlan.UNUSED,
-                ImmutableTagPlan.FINAL_NOT_FOUND);
-        addAlbumClearSteps(steps, ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.RAW_FOUND, ImmutableTagPlan.NO_RAW,
-                ImmutableTagPlan.DUPLICATE);
-        addAlbumStep(steps, "add-raw-keeper-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.KEEPER, keepers);
-        addAlbumStep(steps, "add-raw-unused-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.UNUSED, unused);
-        addAlbumStep(steps, "add-raw-final-not-found-to-album", ImmutableTagPlan.RAW, plan, ImmutableTagPlan.FINAL_NOT_FOUND, finalNotFound);
-        addAlbumStep(steps, "add-final-raw-found-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.RAW_FOUND, rawFound);
-        addAlbumStep(steps, "add-final-no-raw-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.NO_RAW, noRaw);
-        addAlbumStep(steps, "add-final-duplicate-to-album", ImmutableTagPlan.FINAL, plan, ImmutableTagPlan.DUPLICATE, duplicates);
+        Map<String, List<String>> rawAlbumDecisions = new LinkedHashMap<>();
+        rawAlbumDecisions.put(ImmutableTagPlan.KEEPER, keepers);
+        rawAlbumDecisions.put(ImmutableTagPlan.UNUSED, unused);
+        rawAlbumDecisions.put(ImmutableTagPlan.FINAL_NOT_FOUND, finalNotFound);
+        addAlbumReconcileSteps(steps, ImmutableTagPlan.RAW, plan, rawAlbumDecisions);
+
+        Map<String, List<String>> finalAlbumDecisions = new LinkedHashMap<>();
+        finalAlbumDecisions.put(ImmutableTagPlan.RAW_FOUND, rawFound);
+        finalAlbumDecisions.put(ImmutableTagPlan.NO_RAW, noRaw);
+        finalAlbumDecisions.put(ImmutableTagPlan.DUPLICATE, duplicates);
+        addAlbumReconcileSteps(steps, ImmutableTagPlan.FINAL, plan, finalAlbumDecisions);
         Instant now = Instant.now();
         return new PlanApplyOperation("apply-" + plan.id(), plan.id(), plan.fingerprint(), now, now,
                 State.RUNNING, null, steps);
@@ -237,32 +238,30 @@ public final class PlanApplyOperation {
         return value;
     }
 
-    private static void addAlbumClearSteps(List<Step> steps, String account, ImmutableTagPlan plan, String... decisions) {
-        Set<String> seen = new LinkedHashSet<>();
-        for (String decision : decisions) {
+    private static void addAlbumReconcileSteps(
+            List<Step> steps,
+            String account,
+            ImmutableTagPlan plan,
+            Map<String, List<String>> decisionAssetIds
+    ) {
+        Map<String, LinkedHashSet<String>> idsByAlbum = new LinkedHashMap<>();
+        Map<String, String> albumNamesByKey = new LinkedHashMap<>();
+        Map<String, String> firstDecisionByKey = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : decisionAssetIds.entrySet()) {
+            String decision = entry.getKey();
             String album = plan.decisionAlbums().get(decision);
             if (album == null || album.isBlank()) {
                 continue;
             }
             String key = account.toLowerCase() + "\n" + album.toLowerCase();
-            if (seen.add(key)) {
-                steps.add(Step.pendingAlbum("clear-" + account.toLowerCase() + "-" + decision.toLowerCase() + "-album",
-                        account, Mutation.CLEAR, album, List.of()));
-            }
+            albumNamesByKey.putIfAbsent(key, album);
+            firstDecisionByKey.putIfAbsent(key, decision);
+            idsByAlbum.computeIfAbsent(key, ignored -> new LinkedHashSet<>()).addAll(entry.getValue());
         }
-    }
-
-    private static void addAlbumStep(
-            List<Step> steps,
-            String id,
-            String account,
-            ImmutableTagPlan plan,
-            String decision,
-            List<String> assetIds
-    ) {
-        String album = plan.decisionAlbums().get(decision);
-        if (album != null && !album.isBlank() && !assetIds.isEmpty()) {
-            steps.add(Step.pendingAlbum(id, account, Mutation.ADD, album, assetIds));
+        for (Map.Entry<String, LinkedHashSet<String>> entry : idsByAlbum.entrySet()) {
+            String decision = firstDecisionByKey.get(entry.getKey());
+            steps.add(Step.pendingAlbum("reconcile-" + account.toLowerCase() + "-" + decision.toLowerCase() + "-album",
+                    account, Mutation.RECONCILE, albumNamesByKey.get(entry.getKey()), List.copyOf(entry.getValue())));
         }
     }
 

@@ -298,7 +298,9 @@ public final class ImmichWorkflow {
     }
 
     private int execute(PlanApplyOperation.Step step, IntConsumer checkpoint) throws IOException, InterruptedException {
-        if (step.assetIds().isEmpty() && step.mutation() != PlanApplyOperation.Mutation.CLEAR) {
+        if (step.assetIds().isEmpty()
+                && step.mutation() != PlanApplyOperation.Mutation.CLEAR
+                && step.mutation() != PlanApplyOperation.Mutation.RECONCILE) {
             return 0;
         }
         ImmichApi client = ImmutableTagPlan.RAW.equals(step.account()) ? rawClient : finalClient;
@@ -341,31 +343,69 @@ public final class ImmichWorkflow {
     private int mutateAlbumStep(ImmichApi client, PlanApplyOperation.Step step, IntConsumer checkpoint)
             throws IOException, InterruptedException {
         if (step.mutation() == PlanApplyOperation.Mutation.CLEAR) {
-            return clearAlbum(client, step.tag());
+            // Legacy apply operations used to clear Albums before adding the
+            // desired assets back. New operations reconcile in one diffed step;
+            // treating old clear steps as complete avoids unnecessary churn.
+            return 0;
         }
         ImmichAlbum album;
         if (step.mutation() == PlanApplyOperation.Mutation.ADD) {
             album = client.ensureAlbum(step.tag());
+            return reconcileAlbumMembers(client, album.id(), step.assetIds(), false, checkpoint);
+        } else if (step.mutation() == PlanApplyOperation.Mutation.RECONCILE) {
+            album = step.assetIds().isEmpty() ? existingAlbum(client, step.tag()) : client.ensureAlbum(step.tag());
+            if (album == null) {
+                return 0;
+            }
+            return reconcileAlbumMembers(client, album.id(), step.assetIds(), true, checkpoint);
         } else {
             album = existingAlbum(client, step.tag());
             if (album == null) {
                 // Albums are additive; a missing old Album needs no removal.
                 return step.assetIds().size();
             }
+            return mutateAlbumInBatches(client, album.id(), step.assetIds(), step.mutation(), step.affectedAssets(), checkpoint);
         }
-        return mutateAlbumInBatches(client, album.id(), step.assetIds(), step.mutation(), step.affectedAssets(), checkpoint);
     }
 
-    private int clearAlbum(ImmichApi client, String albumName) throws IOException, InterruptedException {
-        ImmichAlbum album = existingAlbum(client, albumName);
-        if (album == null) {
-            return 0;
+    private int reconcileAlbumMembers(
+            ImmichApi client,
+            String albumId,
+            List<String> desiredAssetIds,
+            boolean removeStaleMembers,
+            IntConsumer checkpoint
+    ) throws IOException, InterruptedException {
+        List<String> desired = new ArrayList<>(new LinkedHashSet<>(desiredAssetIds));
+        validateAcknowledgedCount(0, desired.size());
+        Set<String> desiredSet = new LinkedHashSet<>(desired);
+        Set<String> currentSet = new LinkedHashSet<>(client.albumAssetIds(albumId));
+
+        List<String> stale = new ArrayList<>();
+        if (removeStaleMembers) {
+            for (String current : currentSet) {
+                if (!desiredSet.contains(current)) {
+                    stale.add(current);
+                }
+            }
         }
-        List<String> assetIds = client.albumAssetIds(album.id());
-        if (assetIds.isEmpty()) {
-            return 0;
+
+        List<String> missing = new ArrayList<>();
+        for (String assetId : desired) {
+            if (!currentSet.contains(assetId)) {
+                missing.add(assetId);
+            }
         }
-        return mutateAlbumInBatches(client, album.id(), assetIds, PlanApplyOperation.Mutation.REMOVE, 0, ignored -> { });
+
+        if (!stale.isEmpty()) {
+            mutateAlbumInBatches(client, albumId, stale, PlanApplyOperation.Mutation.REMOVE, 0, ignored -> { });
+        }
+        if (!missing.isEmpty()) {
+            mutateAlbumInBatches(client, albumId, missing, PlanApplyOperation.Mutation.ADD, 0, ignored -> { });
+        }
+        AppLog.info("immich.album_reconciled", Map.of("desiredAssets", desired.size(),
+                "alreadyMembers", desired.size() - missing.size(), "addedAssets", missing.size(), "removedAssets", stale.size()));
+        checkpoint.accept(desired.size());
+        return desired.size();
     }
 
     private ImmichTag existingTag(ImmichApi client, String name) throws IOException, InterruptedException {

@@ -362,6 +362,16 @@ public final class ScanSession {
         return unusedCount;
     }
 
+    public synchronized long finalNotFoundCount() {
+        long count = 0;
+        for (Path rawPath : rawRowsByPath.keySet()) {
+            if (isFinalNotFound(rawPath)) {
+                count += rawRowsByPath.get(rawPath);
+            }
+        }
+        return count;
+    }
+
     public synchronized long rawFoundCount() {
         return rawFoundCount;
     }
@@ -454,6 +464,13 @@ public final class ScanSession {
             return false;
         }
         return rawHasFinalOnCaptureDate.getOrDefault(rawPath, false);
+    }
+
+    private boolean isFinalNotFound(Path rawPath) {
+        if (acceptedByRaw.getOrDefault(rawPath, 0) != 0 || unresolvedByRaw.getOrDefault(rawPath, 0) != 0) {
+            return false;
+        }
+        return !rawHasFinalOnCaptureDate.getOrDefault(rawPath, false);
     }
 
     private static boolean sameCaptureDate(PhotoFile first, PhotoFile second) {

@@ -820,6 +820,7 @@ public final class PhotoCullServer {
         values.put("rawReviewCount", scanSession.rawReviewCount());
         values.put("keeperCount", scanSession.keeperCount());
         values.put("unusedCount", scanSession.unusedCount());
+        values.put("finalNotFoundCount", scanSession.finalNotFoundCount());
         values.put("rawFoundCount", scanSession.rawFoundCount());
         values.put("noRawCount", scanSession.noRawCount());
         values.put("canUndoLastReviewDecision", scanSession.canUndoLastReviewDecision());

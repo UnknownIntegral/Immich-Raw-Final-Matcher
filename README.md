@@ -81,7 +81,7 @@ After every review is resolved, select **Approve dry-run plan**. This writes an 
 
 The app will apply tags only when the request names the currently approved plan. Any new scan, review decision, undo, or tag-configuration change invalidates that approval; approve a new dry-run before applying.
 
-Each apply operation is checkpointed under `/config/tag-operations` before and after every tag mutation. If the container or Immich is interrupted, selecting **Apply approved plan** again resumes incomplete steps for that same plan. Selecting it after a completed operation starts a fresh refresh: it removes the configured PCA decision tags from all assets in the current plan, then reapplies the reviewed tag plan.
+Each apply operation is checkpointed under `/config/tag-operations` before and after every tag mutation. If the container or Immich is interrupted, selecting **Apply approved plan** again resumes incomplete steps for that same plan. Selecting it after a completed operation starts a fresh refresh: it removes the configured PCA decision tags from all assets in the current plan, then reapplies the reviewed tag plan. PCA-managed Albums are reconciled by diff instead of clear-and-repopulate: existing correct members are left alone, missing tagged assets are added, and stale members are removed only when they are no longer part of that Album's current decision set.
 
 The configured decision tags are treated as app-managed states:
 
@@ -101,7 +101,7 @@ Each approved plan also adds its assets to these default Immich Albums. Override
 - `PCA_NO_RAW_ALBUM` (default `PCA - No RAW`)
 - `PCA_DUPLICATE_ALBUM` (default `PCA - Duplicates`)
 
-Album membership is additive: the app does not remove photos from personal Albums.
+Album membership is reconciled only for the configured PCA decision Albums above. The app does not touch unrelated personal Albums; do not point these settings at a personal Album unless you want PCA to manage membership for that decision state.
 
 The plan assigns every final image a six-digit sequence per date (`YYYY-MM-DD-000001.ext`). A matched RAW shares the same basename with its native extension (for example, `2026-06-22-000001.jpg` and `2026-06-22-000001.CR3`); unmatched RAWs receive a free sequence for their own date. The plan and CSV manifest make the intended downloaded-library names reviewable.
 

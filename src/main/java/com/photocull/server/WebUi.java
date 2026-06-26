@@ -52,13 +52,16 @@ public final class WebUi {
                     <section>
                       <h2>Scan summary</h2>
                       <div class="summary">
-                        <div class="metric"><div>RAW files detected</div><div id="rawCount">0</div></div>
-                        <div class="metric"><div>Final files detected</div><div id="finalCount">0</div></div>
-                        <div class="metric"><div>Finals with matching RAW</div><div id="rawFoundCount">0</div></div>
-                        <div class="metric"><div>Pairs needing review</div><div id="reviewCount">0</div></div>
-                        <div class="metric"><div>Unused RAWs</div><div id="unusedCount">0</div></div>
-                        <div class="metric"><div>Duplicate final photos</div><div id="duplicateCount">0</div></div>
-                        <div class="metric"><div>Duplicate RAW photos</div><div id="duplicateRawCount">0</div></div>
+                        <div class="metric"><div>Total RAW</div><div id="rawCount">0</div></div>
+                        <div class="metric"><div>Total Final</div><div id="finalCount">0</div></div>
+                        <div class="metric"><div>Total Final with Raw</div><div id="rawFoundCount">0</div></div>
+                        <div class="metric"><div>Total Final No Raw</div><div id="noRawCount">0</div></div>
+                        <div class="metric"><div>Total Keeper RAW</div><div id="keeperCount">0</div></div>
+                        <div class="metric"><div>Total Unused RAW</div><div id="unusedCount">0</div></div>
+                        <div class="metric"><div>Total Final Not Found RAW</div><div id="finalNotFoundCount">0</div></div>
+                        <div class="metric"><div>Duplicate RAW</div><div id="duplicateRawCount">0</div></div>
+                        <div class="metric"><div>Duplicate Final</div><div id="duplicateCount">0</div></div>
+                        <div class="metric"><div>Pairs needing Review</div><div id="reviewCount">0</div></div>
                       </div>
                       <div class="note">Duplicate counts use exact Immich checksums. Possible duplicates use matching filenames only: finals <span id="possibleFinalCount">0</span>, RAWs <span id="possibleRawCount">0</span>.</div>
                     </section>
@@ -238,7 +241,7 @@ public final class WebUi {
                     function render() { renderSummary(); renderPermissions(); renderActiveTab(); }
                     function renderSummary() {
                       const s=state.session||{};
-                      ['rawCount','finalCount','rawFoundCount','reviewCount','unusedCount','duplicateCount','duplicateRawCount'].forEach(id => $(id).textContent=s[id]||0);
+                      ['rawCount','finalCount','rawFoundCount','noRawCount','keeperCount','unusedCount','finalNotFoundCount','duplicateRawCount','duplicateCount','reviewCount'].forEach(id => $(id).textContent=s[id]||0);
                       $('possibleFinalCount').textContent=s.possibleDuplicateFinalCount||0; $('possibleRawCount').textContent=s.possibleDuplicateRawCount||0;
                       $('autoAccept').value=s.autoAcceptThreshold||$('autoAccept').value; $('autoReject').value=s.autoRejectThreshold??$('autoReject').value;
                       const plan=s.activePlan;

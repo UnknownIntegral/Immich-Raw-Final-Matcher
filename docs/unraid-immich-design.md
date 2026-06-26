@@ -17,7 +17,7 @@ Allowed:
 - Read mounted image files to compute local hashes and previews.
 - Write the app's own cache, manifests, and dry-run reports under the appdata volume.
 - Apply review tags through the Immich API when the user confirms the tag plan.
-- Add assets to Immich Albums through the Immich API when the user confirms the tag plan.
+- Reconcile configured PCA decision Albums through the Immich API when the user confirms the tag plan.
 
 Forbidden:
 
@@ -125,6 +125,7 @@ Deletion should happen in Immich after review:
 - Scan completion, automatic outcomes, manual review choices, undos, plan approval, and apply result are appended to a fsynced history journal under `/config/history`. The UI must expose this history and filter it by Immich asset ID.
 - Ambiguous reviews retain a bounded list of scored RAW candidates. A reviewer may select one of those candidates; the choice must be recorded with the prior suggestion and reasoning.
 - The app reconciles only its configured decision tags for assets in the approved plan. `Keeper`/`not used` and `RAW Found`/`No RAW` are mutually exclusive; `duplicate` is additive and removed when no longer planned.
+- The app reconciles only its configured decision Albums. Correct existing Album members are left alone, missing planned members are added, and stale members are removed only when they no longer have that decision state.
 - File move and delete operations are not part of the Unraid workflow.
 - Asset display-name updates are not part of the workflow unless the installed Immich version exposes a documented API for updating `originalFileName`. The app must surface an unsupported capability rather than write Postgres or Immich-managed paths directly.
 - Every approved plan writes CSV and JSON records before mutation; apply-operation JSON records retain completion and failure state.
