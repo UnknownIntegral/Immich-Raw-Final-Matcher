@@ -184,29 +184,43 @@ public final class ImmichClient implements ImmichApi {
     }
 
     private int updateTagAssets(String method, String tagId, List<String> assetIds) throws IOException, InterruptedException {
-        return updateAssetMembership(method, "/tags/" + segment(tagId) + "/assets", assetIds);
+        return updateAssetMembership(method, "/tags/" + segment(tagId) + "/assets", assetIds,
+                "DELETE".equals(method), "PUT".equals(method));
     }
 
     private int updateAlbumAssets(String method, String albumId, List<String> assetIds) throws IOException, InterruptedException {
-        return updateAssetMembership(method, "/albums/" + segment(albumId) + "/assets", assetIds);
+        return updateAssetMembership(method, "/albums/" + segment(albumId) + "/assets", assetIds,
+                "DELETE".equals(method), "PUT".equals(method));
     }
 
     /**
-     * Updates a tag or Album membership. Immich returns {@code not_found} for a
-     * DELETE when the asset is not currently a member. That is already the
-     * desired state for reconciliation, so it must be acknowledged as a no-op.
+     * Updates a tag or Album membership. Immich can report a no-op when the
+     * desired state already exists, such as deleting an absent member or adding
+     * an existing one. Those are acknowledged as success so retries stay
+     * idempotent.
      */
-    private int updateAssetMembership(String method, String path, List<String> assetIds) throws IOException, InterruptedException {
+    private int updateAssetMembership(
+            String method,
+            String path,
+            List<String> assetIds,
+            boolean missingMembershipIsSuccess,
+            boolean existingMembershipIsSuccess
+    ) throws IOException, InterruptedException {
         if (assetIds.isEmpty()) {
             return 0;
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ids", assetIds);
         String response = send(method, path, Json.object(body));
-        return countBulkResults(response, assetIds.size(), "DELETE".equals(method));
+        return countBulkResults(response, assetIds.size(), missingMembershipIsSuccess, existingMembershipIsSuccess);
     }
 
-    private static int countBulkResults(String response, int requestedAssets, boolean missingMembershipIsSuccess) {
+    private static int countBulkResults(
+            String response,
+            int requestedAssets,
+            boolean missingMembershipIsSuccess,
+            boolean existingMembershipIsSuccess
+    ) {
         if (response == null || response.isBlank()) {
             return requestedAssets;
         }
@@ -219,11 +233,28 @@ public final class ImmichClient implements ImmichApi {
             Map<String, Object> result = object(item);
             if (result.isEmpty()
                     || Boolean.TRUE.equals(result.get("success"))
-                    || (missingMembershipIsSuccess && "not_found".equals(result.get("error")))) {
+                    || (missingMembershipIsSuccess && missingMembership(result))
+                    || (existingMembershipIsSuccess && existingMembership(result))) {
                 affected++;
             }
         }
         return affected;
+    }
+
+    private static boolean missingMembership(Map<String, Object> result) {
+        return "not_found".equalsIgnoreCase(string(result.get("error")));
+    }
+
+    private static boolean existingMembership(Map<String, Object> result) {
+        String error = string(result.get("error")).toLowerCase(java.util.Locale.ROOT);
+        return error.equals("duplicate")
+                || error.equals("already_exists")
+                || error.equals("already_exist")
+                || error.equals("already_in_album")
+                || error.equals("already_in_tag")
+                || error.equals("conflict")
+                || error.contains("already")
+                || error.contains("duplicate");
     }
 
     private static List<String> assetIdsFrom(Object value) {

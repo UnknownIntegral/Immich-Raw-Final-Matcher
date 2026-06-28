@@ -93,19 +93,27 @@ public final class Tests {
 
     private static void reconcilesAbsentTagAndAlbumMemberships() throws Exception {
         Method countBulkResults = ImmichClient.class.getDeclaredMethod(
-                "countBulkResults", String.class, int.class, boolean.class);
+                "countBulkResults", String.class, int.class, boolean.class, boolean.class);
         countBulkResults.setAccessible(true);
 
         String missingMemberships = "["
                 + "{\"id\":\"raw-1\",\"success\":false,\"error\":\"not_found\"},"
                 + "{\"id\":\"raw-2\",\"success\":false,\"error\":\"not_found\"}]";
-        assertEquals(2, countBulkResults.invoke(null, missingMemberships, 2, true),
+        assertEquals(2, countBulkResults.invoke(null, missingMemberships, 2, true, false),
                 "removing an absent membership is already reconciled");
-        assertEquals(0, countBulkResults.invoke(null, missingMemberships, 2, false),
+        assertEquals(0, countBulkResults.invoke(null, missingMemberships, 2, false, true),
                 "adding still rejects an absent asset");
 
+        String existingMemberships = "["
+                + "{\"id\":\"final-1\",\"success\":false,\"error\":\"duplicate\"},"
+                + "{\"id\":\"final-2\",\"success\":false,\"error\":\"already_exists\"}]";
+        assertEquals(2, countBulkResults.invoke(null, existingMemberships, 2, false, true),
+                "adding an existing membership is already reconciled");
+        assertEquals(0, countBulkResults.invoke(null, existingMemberships, 2, true, false),
+                "removing still rejects duplicate responses");
+
         String deniedMembership = "[{\"id\":\"raw-1\",\"success\":false,\"error\":\"no_permission\"}]";
-        assertEquals(0, countBulkResults.invoke(null, deniedMembership, 1, true),
+        assertEquals(0, countBulkResults.invoke(null, deniedMembership, 1, true, true),
                 "a missing permission remains a failure");
     }
 
