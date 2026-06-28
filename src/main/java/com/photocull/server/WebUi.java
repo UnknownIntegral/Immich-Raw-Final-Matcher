@@ -41,7 +41,7 @@ public final class WebUi {
                         <button id="scanButton" type="submit">Scan Immich</button>
                       </form>
                       <div class="progress-shell" id="progressShell" hidden><div id="progress" class="progress indeterminate"><div></div></div><span id="progressText" class="status">Starting...</span></div>
-                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Approve dry-run plan</button><button id="applyTagsButton" disabled>Apply approved tags and Albums</button><button id="clearCacheButton" class="danger">Clear saved review data</button><span id="planStatus" class="status"></span><span id="message" class="status" aria-live="polite"></span></div>
+                      <div class="actions" style="margin-top:14px"><button id="dryRunButton" class="secondary" disabled>Approve dry-run plan</button><button id="applyTagsButton" disabled>Apply approved tags and Albums</button><button id="lensAlbumsButton" class="secondary" disabled>Create final lens Albums</button><button id="clearCacheButton" class="danger">Clear saved review data</button><span id="planStatus" class="status"></span><span id="message" class="status" aria-live="polite"></span></div>
                       <div id="tagApplySuccess" class="success-box" hidden role="status"></div>
                     </section>
                     <section>
@@ -93,6 +93,7 @@ public final class WebUi {
                     $('scanForm').addEventListener('submit', startScan);
                     $('dryRunButton').addEventListener('click', writeDryRun);
                     $('applyTagsButton').addEventListener('click', applyTags);
+                    $('lensAlbumsButton').addEventListener('click', createLensAlbums);
                     $('permissionCheckButton').addEventListener('click', checkPermissions);
                     $('clearCacheButton').addEventListener('click', clearReviewCache);
                     $('matchesPrevious').addEventListener('click', () => loadMatches(Math.max(0, state.matchesOffset - MATCHES_PAGE_SIZE)));
@@ -194,6 +195,14 @@ public final class WebUi {
                       } catch (error) { message(error.message); }
                       finally { setBusy(false); }
                     }
+                    async function createLensAlbums() {
+                      if (!state.session) { message('Run a scan before creating final lens Albums.'); return; }
+                      if (!confirm('Create final-account Immich Albums grouped by lens model? This does not create or change tags.')) return;
+                      setBusy(true); hideTagApplySuccess(); showProgress('Creating final lens Albums...', -1); message('');
+                      try { const response=await apiFetch('/api/immich/create-lens-albums',{method:'POST'}); const data=await response.json(); if(!response.ok) throw new Error(data.error||'Lens Album creation failed'); const job=await pollOperation('LENS_ALBUM_APPLICATION'); await loadSession(); showTagApplySuccess(job.message||'Final lens Albums created.'); message(''); }
+                      catch(error){ message(error.message); hideProgress(); }
+                      finally { setBusy(false); }
+                    }
                     async function updateStatus(row,status,selectedRawAssetId) {
                       if (busy) return;
                       const rawAssetId=selectedRawAssetId || state.selectedRawByMatch.get(row.index) || row.rawAssetId;
@@ -245,7 +254,7 @@ public final class WebUi {
                       $('possibleFinalCount').textContent=s.possibleDuplicateFinalCount||0; $('possibleRawCount').textContent=s.possibleDuplicateRawCount||0;
                       $('autoAccept').value=s.autoAcceptThreshold||$('autoAccept').value; $('autoReject').value=s.autoRejectThreshold??$('autoReject').value;
                       const plan=s.activePlan;
-                      $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!plan||busy; $('clearCacheButton').disabled=busy;
+                      $('dryRunButton').disabled=!state.session||busy; $('applyTagsButton').disabled=!plan||busy; $('lensAlbumsButton').disabled=!state.session||busy; $('clearCacheButton').disabled=busy;
                       $('planStatus').textContent=plan ? `Approved plan ${plan.id.slice(0,8)} (${plan.operation?.state||'READY'}; reapply available)` : (state.session ? 'Approve a dry-run plan before applying tags.' : '');
                     }
                     function renderPermissions(){const view=$('permissionView');const report=state.permissions;if(!report){view.innerHTML='<div class="muted">Run a scan, then test each account-specific API key.</div>';return;}const account=entry=>`<article class="permission-card"><h3>${escapeHtml(entry?.label||'Immich API key')}</h3>${(entry?.checks||[]).map(check=>`<div class="permission-check"><span class="light ${escapeHtml(check.state||'SKIPPED')}"></span><div><strong>${escapeHtml(check.capability)}</strong><div class="muted">${escapeHtml(check.detail)}</div></div></div>`).join('')}</article>`;view.innerHTML=account(report.raw)+account(report.final);}
@@ -304,7 +313,7 @@ public final class WebUi {
                     function formatDuration(milliseconds){if(!Number.isFinite(milliseconds)||milliseconds<1000)return '';const seconds=Math.round(milliseconds/1000);return seconds<60?`${seconds}s`:seconds<3600?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${Math.floor(seconds/3600)}h ${Math.floor(seconds%3600/60)}m`;}
                     function showProgress(text,percent){$('progressShell').hidden=false;$('progressText').textContent=text||'Working...';const bar=$('progress');bar.classList.toggle('indeterminate',percent==null||percent<0);bar.firstElementChild.style.width=percent>=0?percent+'%':'';}
                     function hideProgress(){$('progressShell').hidden=true;}
-                    function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan;$('permissionCheckButton').disabled=value||!state.session;$('clearCacheButton').disabled=value;if(activeTab==='review')renderReview();}
+                    function setBusy(value){busy=value;$('scanButton').disabled=value;$('dryRunButton').disabled=value||!state.session;$('applyTagsButton').disabled=value||!state.session?.activePlan;$('lensAlbumsButton').disabled=value||!state.session;$('permissionCheckButton').disabled=value||!state.session;$('clearCacheButton').disabled=value;if(activeTab==='review')renderReview();}
                     async function apiFetch(url,options={},retry=true){const headers=new Headers(options.headers||{});const token=localStorage.getItem('pcaAccessToken');if(token)headers.set('X-PCA-Token',token);const response=await fetch(url,{...options,headers});if(response.status===401&&retry){const entered=prompt('Access token');if(entered!==null){localStorage.setItem('pcaAccessToken',entered);return apiFetch(url,options,false);}}return response;}
                     async function loadAppStatus(){const response=await apiFetch('/api/status');const status=await response.json();if(!response.ok)throw new Error(status.error||'Could not read app status');return status;}
                     async function restoreOnLoad(){try{message('Checking saved session...');let status=await loadAppStatus();if(status.stateRestoring){setBusy(true);message('Restoring saved session data...');while(status.stateRestoring){await new Promise(resolve=>setTimeout(resolve,300));status=await loadAppStatus();}setBusy(false);}state.permissions=status.permissions||null;if(status.hasSession){useSession(status.session);await refreshReview();}else{renderPermissions();}const scan=status.scanJob;const operation=status.operationJob;if(scan?.state==='RUNNING'){setBusy(true);showJobProgress(scan);await pollScan();}else if(operation?.state==='RUNNING'){setBusy(true);showJobProgress(operation);await pollOperation(operation.kind);await loadSession();await loadTagPlan();setBusy(false);}else if(scan?.state==='INTERRUPTED'){message(scan.error||scan.message);}else{message('');}}catch(error){setBusy(false);message(error.message);}}

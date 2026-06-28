@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -248,6 +249,47 @@ public final class ImmichWorkflow {
         return result(plan, operation, manifest);
     }
 
+    public PlanApplyOperation createFinalLensAlbums(
+            ScanSession session,
+            Consumer<PlanApplyOperation> checkpoint
+    ) throws IOException, InterruptedException {
+        config.requireConfigured();
+        PlanApplyOperation operation = PlanApplyOperation.createFinalLensAlbums(finalLensAlbumGroups(session));
+        if (operation.isComplete()) {
+            checkpoint.accept(operation);
+            return operation;
+        }
+        operation.begin();
+        AppLog.info("immich.lens_album_apply_started", Map.of("operationId", AppLog.shortId(operation.id()),
+                "steps", operation.steps().size()));
+        checkpoint.accept(operation);
+        for (PlanApplyOperation.Step step : operation.steps()) {
+            if (step.state() == PlanApplyOperation.StepState.COMPLETE) {
+                continue;
+            }
+            operation.start(step);
+            AppLog.info("immich.lens_album_step_started", stepFields(operation.planId(), operation, step));
+            checkpoint.accept(operation);
+            try {
+                int affected = execute(step, acknowledgedAssets -> {
+                    operation.progress(step, acknowledgedAssets);
+                    checkpoint.accept(operation);
+                });
+                operation.complete(step, affected);
+                Map<String, Object> fields = stepFields(operation.planId(), operation, step);
+                fields.put("affectedAssets", affected);
+                AppLog.info("immich.lens_album_step_completed", fields);
+                checkpoint.accept(operation);
+            } catch (IOException | InterruptedException | RuntimeException ex) {
+                operation.fail(step, ex);
+                AppLog.error("immich.lens_album_step_failed", stepFields(operation.planId(), operation, step), ex);
+                checkpoint.accept(operation);
+                throw ex;
+            }
+        }
+        return operation;
+    }
+
     /**
      * Applies only the supplied immutable snapshot. The checkpoint is called
      * before and after every external mutation, which lets callers safely
@@ -323,6 +365,34 @@ public final class ImmichWorkflow {
                     + step.assetIds().size() + " requested assets.");
         }
         return affected;
+    }
+
+    private Map<String, List<String>> finalLensAlbumGroups(ScanSession session) {
+        Map<String, LinkedHashSet<String>> idsByKey = new LinkedHashMap<>();
+        Map<String, String> albumByKey = new LinkedHashMap<>();
+        String prefix = config.lensAlbumPrefix();
+        session.finals().stream()
+                .sorted((first, second) -> first.path().toString().compareToIgnoreCase(second.path().toString()))
+                .forEach(photo -> {
+                    String lens = normalizeLens(photo.lensModel());
+                    String assetId = photo.immichAssetId();
+                    if (lens.isBlank() || assetId == null || assetId.isBlank()) {
+                        return;
+                    }
+                    String album = prefix + lens;
+                    String key = album.toLowerCase(Locale.ROOT);
+                    albumByKey.putIfAbsent(key, album);
+                    idsByKey.computeIfAbsent(key, ignored -> new LinkedHashSet<>()).add(assetId);
+                });
+        Map<String, List<String>> grouped = new LinkedHashMap<>();
+        idsByKey.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> grouped.put(albumByKey.get(entry.getKey()), List.copyOf(entry.getValue())));
+        return grouped;
+    }
+
+    private String normalizeLens(String lensModel) {
+        return lensModel == null ? "" : lensModel.trim().replaceAll("\\s+", " ");
     }
 
     private int mutateTagStep(ImmichApi client, PlanApplyOperation.Step step, IntConsumer checkpoint)
@@ -532,8 +602,12 @@ public final class ImmichWorkflow {
     }
 
     private Map<String, Object> stepFields(ImmutableTagPlan plan, PlanApplyOperation operation, PlanApplyOperation.Step step) {
+        return stepFields(AppLog.shortId(plan.id()), operation, step);
+    }
+
+    private Map<String, Object> stepFields(String planId, PlanApplyOperation operation, PlanApplyOperation.Step step) {
         Map<String, Object> values = new LinkedHashMap<>();
-        values.put("planId", AppLog.shortId(plan.id()));
+        values.put("planId", planId);
         values.put("operationId", AppLog.shortId(operation.id()));
         values.put("step", step.id());
         values.put("account", step.account().toLowerCase());

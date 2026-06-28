@@ -103,6 +103,7 @@ public final class PhotoCullServer {
         server.createContext("/api/immich/thumbnail", logged(this::handleImmichThumbnail));
         server.createContext("/api/immich/permissions", logged(this::handleImmichPermissions));
         server.createContext("/api/immich/apply-tags", logged(this::handleImmichApplyTags));
+        server.createContext("/api/immich/create-lens-albums", logged(this::handleImmichCreateLensAlbums));
         int requestThreads = Math.max(4, Math.min(16, Runtime.getRuntime().availableProcessors()));
         server.setExecutor(Executors.newFixedThreadPool(requestThreads));
         server.start();
@@ -645,8 +646,8 @@ public final class PhotoCullServer {
         }
         try {
             synchronized (applyLock) {
-                if (tagApplicationInProgress) {
-                    throw new IllegalStateException("Wait for the approved plan application to finish before testing permissions.");
+                if (operationRunning() || tagApplicationInProgress) {
+                    throw new IllegalStateException("Wait for the active Immich operation to finish before testing permissions.");
                 }
                 permissionReport = immichWorkflow.checkPermissions(session);
             }
@@ -709,6 +710,39 @@ public final class PhotoCullServer {
         }
     }
 
+    private void handleImmichCreateLensAlbums(HttpExchange exchange) throws IOException {
+        if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+            send(exchange, 405, "application/json", error("Method not allowed"));
+            return;
+        }
+        if (!requireAccess(exchange)) {
+            return;
+        }
+        if (!requireRestoredState(exchange)) {
+            return;
+        }
+        if (session == null) {
+            send(exchange, 409, "application/json", error("Run a scan before creating final-account lens Albums."));
+            return;
+        }
+
+        try {
+            synchronized (applyLock) {
+                if (operationRunning() || tagApplicationInProgress) {
+                    throw new IllegalStateException("Another Immich operation is already running.");
+                }
+                OperationJob job = new OperationJob("LENS_ALBUM_APPLICATION", "Preparing lens Albums",
+                        "Grouping final images by lens model...");
+                operationJob = job;
+                ScanSession sessionSnapshot = session;
+                operationExecutor.submit(() -> runLensAlbumApplication(job, sessionSnapshot));
+                send(exchange, 202, "application/json; charset=utf-8", Json.object(Map.of("job", job.json())));
+            }
+        } catch (Exception ex) {
+            send(exchange, 400, "application/json", error(ex.getMessage()));
+        }
+    }
+
     private void runTagApplication(OperationJob job, ImmutableTagPlan plan, ScanSession sessionSnapshot) {
         PlanApplyOperation operation = null;
         try {
@@ -751,6 +785,22 @@ public final class PhotoCullServer {
         }
     }
 
+    private void runLensAlbumApplication(OperationJob job, ScanSession sessionSnapshot) {
+        PlanApplyOperation operation = null;
+        try {
+            operation = immichWorkflow.createFinalLensAlbums(sessionSnapshot, updated -> updateApplyProgress(job, updated));
+            int albumCount = operation.steps().size();
+            int assetCount = operation.steps().stream().mapToInt(step -> step.assetIds().size()).sum();
+            job.complete("Final-account lens Albums created. " + assetCount + " final images grouped into "
+                    + albumCount + " Albums.");
+            AppLog.info("lens_albums.apply_completed", Map.of("operationId", AppLog.shortId(operation.id()),
+                    "albums", albumCount, "assets", assetCount));
+        } catch (Exception ex) {
+            job.fail(ex);
+            AppLog.error("lens_albums.apply_failed", Map.of("operationId", operation == null ? "" : AppLog.shortId(operation.id())), ex);
+        }
+    }
+
     private void updateApplyProgress(OperationJob job, PlanApplyOperation operation) {
         List<PlanApplyOperation.Step> steps = operation.steps();
         int total = steps.stream().mapToInt(step -> step.assetIds().size()).sum();
@@ -758,9 +808,10 @@ public final class PhotoCullServer {
                 ? step.assetIds().size() : step.affectedAssets()).sum();
         PlanApplyOperation.Step active = steps.stream()
                 .filter(step -> step.state() == PlanApplyOperation.StepState.RUNNING).findFirst().orElse(null);
-        String phase = active == null ? "Preparing tag application" : describeApplyStep(active);
+        boolean lensAlbums = "LENS_ALBUM_APPLICATION".equals(job.kind());
+        String phase = active == null ? (lensAlbums ? "Preparing lens Albums" : "Preparing tag application") : describeApplyStep(active);
         String message = active == null
-                ? "Preparing " + steps.size() + " tag and Album steps..."
+                ? "Preparing " + steps.size() + (lensAlbums ? " lens Album steps..." : " tag and Album steps...")
                 : active.affectedAssets() + " of " + active.assetIds().size() + " assets acknowledged for this step.";
         job.progress(phase, message, completed, total);
     }

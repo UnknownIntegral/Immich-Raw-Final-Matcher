@@ -172,6 +172,10 @@ public record ImmichConfig(
         return Map.copyOf(albums);
     }
 
+    public String lensAlbumPrefix() {
+        return firstNonBlank(env("PCA_LENS_ALBUM_PREFIX"), "PCA - Lens - ");
+    }
+
     private static String env(String key) {
         return System.getenv(key);
     }

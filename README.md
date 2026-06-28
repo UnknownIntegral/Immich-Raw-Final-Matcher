@@ -103,6 +103,8 @@ Each approved plan also adds its assets to these default Immich Albums. Override
 
 Album membership is reconciled only for the configured PCA decision Albums above. The app does not touch unrelated personal Albums; do not point these settings at a personal Album unless you want PCA to manage membership for that decision state.
 
+The separate **Create final lens Albums** action creates final-account Albums grouped by the final image EXIF lens model. It does not create tags or touch the RAW account. Lens Albums are additive: existing members are left alone and missing scanned final assets are added. Album names use `PCA_LENS_ALBUM_PREFIX` (default `PCA - Lens - `) followed by the lens model.
+
 The plan assigns every final image a six-digit sequence per date (`YYYY-MM-DD-000001.ext`). A matched RAW shares the same basename with its native extension (for example, `2026-06-22-000001.jpg` and `2026-06-22-000001.CR3`); unmatched RAWs receive a free sequence for their own date. The plan and CSV manifest make the intended downloaded-library names reviewable.
 
 **Important:** Immich's current public API exposes `originalFileName` for reading but not for safe updating. Therefore this app does not rename the displayed `IMG_2535` value, its database row, or the underlying Immich-managed file. The permission panel marks displayed-filename update as **Unsupported** rather than risking the database or storage paths. If Immich later adds an official filename-update API, the existing immutable filename plan can become its input safely.

@@ -73,6 +73,7 @@ public final class Tests {
         appliesTagsWithSideSpecificClients();
         plansDateOnlySharedBasenamesAndAlbums();
         testsPermissionsForEachAccountSpecificKey();
+        createsFinalLensAlbumsWithoutTagsOrRawMutations();
         freezesExactPlanBeforeApplying();
         reconcilesStaleDecisionTags();
         reconcilesManagedAlbumsWithoutReaddingExistingMembers();
@@ -843,6 +844,39 @@ public final class Tests {
                         && check.state() == ImmichPermissionReport.State.UNSUPPORTED), "filename update safely unavailable");
         assertTrue(rawApi.taggedAssetIds.contains("raw-permission"), "raw API key runs its own write probe");
         assertTrue(finalApi.taggedAssetIds.contains("final-permission"), "final API key runs its own write probe");
+    }
+
+    private static void createsFinalLensAlbumsWithoutTagsOrRawMutations() throws IOException, InterruptedException {
+        RecordingImmichApi rawApi = new RecordingImmichApi();
+        RecordingImmichApi finalApi = new RecordingImmichApi();
+        ImmichWorkflow workflow = new ImmichWorkflow(config("raw-key", "final-key"), new RecordingImmichApi(), rawApi, finalApi);
+        PhotoFile raw = exifPhoto("raw-1", "raw-user", "IMG_0001.CR3", "Canon", "R5",
+                "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200");
+        PhotoFile first = exifPhoto("final-1", "final-user", "IMG_0001.jpg", "Canon", "R5",
+                "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200");
+        PhotoFile second = exifPhoto("final-2", "final-user", "IMG_0002.jpg", "Canon", "R5",
+                "RF50mm F1.2 L USM", 1.2, 50.0, 200, "1/500");
+        PhotoFile missingLens = exifPhoto("final-3", "final-user", "IMG_0003.jpg", "Canon", "R5",
+                "", 4.0, 35.0, 100, "1/250");
+        ScanSession session = new ScanSession(List.of(raw), List.of(first, second, missingLens), List.of(
+                new MatchResult(first, raw, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null),
+                new MatchResult(second, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null),
+                new MatchResult(missingLens, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null)
+        ), 90, 50);
+
+        PlanApplyOperation operation = workflow.createFinalLensAlbums(session, ignored -> { });
+
+        assertEquals(PlanApplyOperation.State.COMPLETE, operation.state(), "lens Album operation completes");
+        assertTrue(finalApi.visibleAlbums.stream().anyMatch(album -> album.name().equals("PCA - Lens - RF24-70mm F2.8 L IS USM")),
+                "first lens Album created on final account");
+        assertTrue(finalApi.visibleAlbums.stream().anyMatch(album -> album.name().equals("PCA - Lens - RF50mm F1.2 L USM")),
+                "second lens Album created on final account");
+        assertTrue(finalApi.albumAssetIds.contains("final-1"), "first final is added to lens Album");
+        assertTrue(finalApi.albumAssetIds.contains("final-2"), "second final is added to lens Album");
+        assertTrue(!finalApi.albumAssetIds.contains("final-3"), "missing lens is skipped");
+        assertEquals(0, finalApi.ensuredTags.size(), "lens Albums do not create tags");
+        assertEquals(0, rawApi.visibleAlbums.size(), "raw account Albums are untouched");
+        assertEquals(0, rawApi.taggedAssetIds.size(), "raw account tags are untouched");
     }
 
     private static void freezesExactPlanBeforeApplying() {

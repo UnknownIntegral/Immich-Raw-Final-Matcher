@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Persistent state for one plan application. A failed or interrupted operation
@@ -99,6 +100,19 @@ public final class PlanApplyOperation {
         Instant now = Instant.now();
         return new PlanApplyOperation("apply-" + plan.id(), plan.id(), plan.fingerprint(), now, now,
                 State.RUNNING, null, steps);
+    }
+
+    public static PlanApplyOperation createFinalLensAlbums(Map<String, List<String>> assetIdsByAlbum) {
+        List<Step> steps = new ArrayList<>();
+        int index = 1;
+        for (Map.Entry<String, List<String>> entry : assetIdsByAlbum.entrySet()) {
+            steps.add(Step.pendingAlbum("add-final-lens-album-" + index++,
+                    ImmutableTagPlan.FINAL, Mutation.ADD, entry.getKey(), unique(entry.getValue())));
+        }
+        Instant now = Instant.now();
+        String id = "lens-albums-" + UUID.randomUUID();
+        return new PlanApplyOperation(id, id, "", now, now,
+                steps.isEmpty() ? State.COMPLETE : State.RUNNING, null, steps);
     }
 
     public synchronized void begin() {
@@ -207,6 +221,10 @@ public final class PlanApplyOperation {
             }
         }
         return List.copyOf(ids);
+    }
+
+    private static List<String> unique(List<String> assetIds) {
+        return List.copyOf(new LinkedHashSet<>(assetIds));
     }
 
     private static List<String> allFinalDecisionIds(List<ImmutableTagPlan.PlanItem> items) {
