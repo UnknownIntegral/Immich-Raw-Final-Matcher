@@ -856,11 +856,17 @@ public final class Tests {
                 "RF24-70mm F2.8 L IS USM", 2.8, 50.0, 400, "1/200");
         PhotoFile second = exifPhoto("final-2", "final-user", "IMG_0002.jpg", "Canon", "R5",
                 "RF50mm F1.2 L USM", 1.2, 50.0, 200, "1/500");
-        PhotoFile missingLens = exifPhoto("final-3", "final-user", "IMG_0003.jpg", "Canon", "R5",
+        PhotoFile manualLens = exifPhoto("final-3", "final-user", "IMG_0003.jpg", "Canon", "R5",
                 "", 4.0, 35.0, 100, "1/250");
-        ScanSession session = new ScanSession(List.of(raw), List.of(first, second, missingLens), List.of(
+        PhotoFile missingLens = exifPhoto("final-4", "final-user", "IMG_0004.jpg", "Canon", "R5",
+                "", 4.0, 35.0, null, "1/250");
+        finalApi.visibleAlbums.add(new ImmichAlbum("album-PCA - Lens - RF24-70mm F2.8 L IS USM",
+                "PCA - Lens - RF24-70mm F2.8 L IS USM"));
+        finalApi.albumAssetsById.put("album-PCA - Lens - RF24-70mm F2.8 L IS USM", new ArrayList<>(List.of("final-1")));
+        ScanSession session = new ScanSession(List.of(raw), List.of(first, second, manualLens, missingLens), List.of(
                 new MatchResult(first, raw, 100, "accepted", MatchStatus.AUTO_ACCEPTED, null),
                 new MatchResult(second, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null),
+                new MatchResult(manualLens, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null),
                 new MatchResult(missingLens, null, 0, "no RAW", MatchStatus.AUTO_REJECTED, null)
         ), 90, 50);
 
@@ -871,9 +877,12 @@ public final class Tests {
                 "first lens Album created on final account");
         assertTrue(finalApi.visibleAlbums.stream().anyMatch(album -> album.name().equals("PCA - Lens - RF50mm F1.2 L USM")),
                 "second lens Album created on final account");
-        assertTrue(finalApi.albumAssetIds.contains("final-1"), "first final is added to lens Album");
+        assertTrue(finalApi.visibleAlbums.stream().anyMatch(album -> album.name().equals("PCA - Lens - Manual Lens")),
+                "manual lens Album created on final account");
+        assertTrue(!finalApi.albumAssetIds.contains("final-1"), "existing lens Album member is not re-added");
         assertTrue(finalApi.albumAssetIds.contains("final-2"), "second final is added to lens Album");
-        assertTrue(!finalApi.albumAssetIds.contains("final-3"), "missing lens is skipped");
+        assertTrue(finalApi.albumAssetIds.contains("final-3"), "manual lens final is added to manual lens Album");
+        assertTrue(!finalApi.albumAssetIds.contains("final-4"), "missing lens without manual-lens clues is skipped");
         assertEquals(0, finalApi.ensuredTags.size(), "lens Albums do not create tags");
         assertEquals(0, rawApi.visibleAlbums.size(), "raw account Albums are untouched");
         assertEquals(0, rawApi.taggedAssetIds.size(), "raw account tags are untouched");

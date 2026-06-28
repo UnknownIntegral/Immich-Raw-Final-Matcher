@@ -103,7 +103,7 @@ Each approved plan also adds its assets to these default Immich Albums. Override
 
 Album membership is reconciled only for the configured PCA decision Albums above. The app does not touch unrelated personal Albums; do not point these settings at a personal Album unless you want PCA to manage membership for that decision state.
 
-The separate **Create final lens Albums** action creates final-account Albums grouped by the final image EXIF lens model. It does not create tags or touch the RAW account. Lens Albums are additive: existing members are left alone and missing scanned final assets are added. Album names use `PCA_LENS_ALBUM_PREFIX` (default `PCA - Lens - `) followed by the lens model.
+The separate **Create final lens Albums** action creates final-account Albums grouped by the final image EXIF lens model. It does not create tags or touch the RAW account. Lens Albums are additive: existing members are left alone and missing scanned final assets are added. Album names use `PCA_LENS_ALBUM_PREFIX` (default `PCA - Lens - `) followed by the lens model. If a final image has camera metadata plus ISO and shutter speed but no lens model, it is grouped under `Manual Lens`.
 
 The plan assigns every final image a six-digit sequence per date (`YYYY-MM-DD-000001.ext`). A matched RAW shares the same basename with its native extension (for example, `2026-06-22-000001.jpg` and `2026-06-22-000001.CR3`); unmatched RAWs receive a free sequence for their own date. The plan and CSV manifest make the intended downloaded-library names reviewable.
 

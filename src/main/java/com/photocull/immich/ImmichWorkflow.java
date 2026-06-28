@@ -374,7 +374,7 @@ public final class ImmichWorkflow {
         session.finals().stream()
                 .sorted((first, second) -> first.path().toString().compareToIgnoreCase(second.path().toString()))
                 .forEach(photo -> {
-                    String lens = normalizeLens(photo.lensModel());
+                    String lens = lensAlbumLabel(photo);
                     String assetId = photo.immichAssetId();
                     if (lens.isBlank() || assetId == null || assetId.isBlank()) {
                         return;
@@ -389,6 +389,25 @@ public final class ImmichWorkflow {
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> grouped.put(albumByKey.get(entry.getKey()), List.copyOf(entry.getValue())));
         return grouped;
+    }
+
+    private String lensAlbumLabel(PhotoFile photo) {
+        String lens = normalizeLens(photo.lensModel());
+        if (!lens.isBlank()) {
+            return lens;
+        }
+        if (hasCameraModel(photo) && photo.iso() != null && !blank(photo.exposureTime())) {
+            return "Manual Lens";
+        }
+        return "";
+    }
+
+    private boolean hasCameraModel(PhotoFile photo) {
+        return !blank(photo.make()) || !blank(photo.model());
+    }
+
+    private boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     private String normalizeLens(String lensModel) {
